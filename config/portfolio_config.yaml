@@ -1,0 +1,23 @@
+capital: 100000
+
+stocks:
+  - HDFCBANK.NS
+  - ICICIBANK.NS
+  - BAJFINANCE.NS
+  - CAMS.NS
+  - LT.NS
+  - PERSISTENT.NS
+  - ITC.NS
+  - NTPC.NS
+  - KFINTECH.NS
+  - BEL.NS
+  - SRF.NS
+  - VINATIORGA.NS
+  - DIVISLAB.NS
+  - NATCOPHARM.NS
+
+rebalance_frequency_days: 30
+
+momentum_lookback_days: 90
+volatility_lookback_days: 60
+top_momentum_percentile: 0.5

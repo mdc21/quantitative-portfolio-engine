@@ -1,0 +1,17 @@
+# Environment
+venv/
+.env
+
+# Python
+__pycache__/
+*.pyc
+
+# Logs
+logs/
+*.log
+
+# Mac OS
+.DS_Store
+
+# State Files (Exclude the JSON so we don't commit temporary trades)
+data/portfolio_history.json
