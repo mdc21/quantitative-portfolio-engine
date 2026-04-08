@@ -16,20 +16,20 @@ with open("config/portfolio_config.yaml") as f:
 
 from core.universe import fetch_broad_universe, apply_fundamental_filters
 from core.state import load_portfolio_state, save_portfolio_state
-from core.optimizer import apply_turnover_control
+from core.optimizer import apply_turnover_control, apply_cap_size_constraints
 from core.momentum import apply_sector_caps
 
-broad_universe = fetch_broad_universe("nifty50")
-tickers, sector_map, scoring_df = apply_fundamental_filters(broad_universe)
+universe_dict = fetch_broad_universe("multi_cap")
+tickers, sector_map, cap_map, scoring_df = apply_fundamental_filters(universe_dict)
 
 capital = config["capital"]
 
 index_data = yf.download("^NSEI", period="6mo")
 if index_data.empty:
-    print("Failed to download market data from Yahoo Finance! Exiting...")
-    exit()
-
-index_prices = index_data["Close"]
+    print("Failed to download market data from Yahoo Finance! Continuing without benchmark visualization dependencies...")
+    index_prices = None
+else:
+    index_prices = index_data["Close"]
 
 try:
     logger.info("Initiating Headless Execution Pipeline...")
@@ -40,11 +40,11 @@ try:
 
     # 1. Broad Universe
     logger.info("Fetching Broad Universe...")
-    universe_tickers = fetch_broad_universe("nifty50")
+    universe_tickers = fetch_broad_universe("multi_cap")
 
     # 2. Fundamental Sandbox
     logger.info("Running Fundamental Matrix...")
-    tickers, sector_map, scoring_df = apply_fundamental_filters(universe_tickers)
+    tickers, sector_map, cap_map, scoring_df = apply_fundamental_filters(universe_tickers)
 
     if not tickers:
         logger.error("Zero fundamental assets survived logic trap.")
@@ -73,8 +73,27 @@ try:
 
     # 7. Weights
     logger.info("Generating Final Math Constraints...")
-    weights = optimize_weights(prices, selected)
+    regime = compute_macro_regime(repo, cpi, prices=prices)
+    
+    limits = {
+        "cap_large": 0.70,
+        "cap_mid": 0.20,
+        "cap_small": 0.10,
+        "category_caps": {
+            "Financials": 0.30 if regime.get("rate_trend") != "rising" else 0.20,
+            "Technology": 0.20,
+            "Industrials_Infra": 0.20,
+            "Consumer_FMCG": 0.15,
+            "Pharma_Healthcare": 0.15,
+            "Chemicals": 0.12, 
+            "PSU_Utilities": 0.10,
+            "Others": 0.10
+        }
+    }
+    
+    weights = optimize_weights(prices, selected, regime, sector_map, cap_map, limits)
     weights = apply_sector_weight_constraints(weights, sector_map, regime)
+    weights = apply_cap_size_constraints(weights, cap_map)
     weights = apply_macro_overlay(weights, regime)
     weights = apply_drawdown_control(weights, prices[selected])
 

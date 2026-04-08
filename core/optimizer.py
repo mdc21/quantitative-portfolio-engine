@@ -1,15 +1,117 @@
 import numpy as np
+import pandas as pd
+from scipy.optimize import minimize
+from scipy.cluster.hierarchy import linkage
+from scipy.spatial.distance import squareform
 
-def optimize_weights(prices, selected_stocks):
+def optimize_weights(prices, selected_stocks, regime, sector_map=None, cap_map=None, limits=None):
+    mode = regime.get("optimization_mode", "HRP")
+    
+    if mode == "Markowitz":
+        return _optimize_markowitz(prices, selected_stocks, sector_map, cap_map, limits)
+    else:
+        return _optimize_hrp(prices, selected_stocks)
+
+def _optimize_hrp(prices, selected_stocks):
+    """
+    Hierarchical Risk Parity (HRP)
+    Builds a tree of correlations and allocates inversely proportional to cluster variance.
+    Completely ignores expected returns, focusing purely on avoiding correlated crashes.
+    """
     returns = prices[selected_stocks].pct_change().dropna()
+    cov, corr = returns.cov(), returns.corr()
+    
+    # Distance matrix
+    dist = np.sqrt(0.5 * (1 - corr).clip(0, 2))  
+    link = linkage(squareform(dist), method='single')
+    
+    def get_quasi_diag(link):
+        link = link.astype(int)
+        sort_ix = pd.Series([link[-1, 0], link[-1, 1]])
+        num_items = link[-1, 3]
+        while sort_ix.max() >= num_items:
+            sort_ix.index = range(0, sort_ix.shape[0] * 2, 2)
+            df0 = sort_ix[sort_ix >= num_items]
+            i = df0.index
+            j = df0.values - num_items
+            sort_ix[i] = link[j, 0]
+            df0 = pd.Series(link[j, 1], index=i + 1)
+            sort_ix = pd.concat([sort_ix, df0])
+            sort_ix = sort_ix.sort_index()
+            sort_ix.index = range(sort_ix.shape[0])
+        return sort_ix.tolist()
+        
+    sort_ix = get_quasi_diag(link)
+    sort_ix = returns.columns[sort_ix].tolist()
+    
+    def get_cluster_var(cov, c_items):
+        cov_vals = cov.loc[c_items, c_items].values
+        ivp = 1. / np.diag(cov_vals)
+        ivp /= ivp.sum()
+        w = ivp.reshape(-1, 1)
+        return float(np.dot(np.dot(w.T, cov_vals), w).item())
+        
+    def get_rec_bipart(cov, sort_ix):
+        w = pd.Series(1.0, index=sort_ix)
+        c_items = [sort_ix]
+        while len(c_items) > 0:
+            c_items = [i[j:k] for i in c_items for j, k in ((0, len(i) // 2), (len(i) // 2, len(i))) if len(i) > 1]
+            for i in range(0, len(c_items), 2):
+                c_items0 = c_items[i]
+                c_items1 = c_items[i + 1]
+                c_var0 = get_cluster_var(cov, c_items0)
+                c_var1 = get_cluster_var(cov, c_items1)
+                alpha = 1 - c_var0 / (c_var0 + c_var1)
+                w[c_items0] *= alpha
+                w[c_items1] *= 1 - alpha
+        return w
+        
+    weights = get_rec_bipart(cov, sort_ix)
+    return weights.to_dict()
 
-    cov = returns.cov()
-    vol = np.sqrt(np.diag(cov))
+def _optimize_markowitz(prices, selected_stocks, sector_map, cap_map, limits):
+    """
+    Mean-Variance Optimization (Markowitz)
+    Maximizes Sharpe Ratio globally. Integrates sector and cap size inequalities natively.
+    """
+    returns = prices[selected_stocks].pct_change().dropna()
+    mu = returns.mean() * 252
+    cov = returns.cov() * 252
+    
+    num_assets = len(selected_stocks)
+    
+    def neg_sharpe(w):
+        port_ret = np.dot(w, mu)
+        port_vol = np.sqrt(np.dot(w.T, np.dot(cov, w)))
+        return -port_ret / port_vol if port_vol > 0 else 0
+        
+    bounds = tuple((0.0, 1.0) for _ in range(num_assets))
+    constraints = [{'type': 'eq', 'fun': lambda x: np.sum(x) - 1.0}]
+    
+    if limits:
+        # Sector Inequalities
+        for cat, limit in limits.get("category_caps", {}).items():
+            idxs = [i for i, s in enumerate(selected_stocks) if sector_map.get(s, "Others") == cat]
+            if idxs:
+                constraints.append({'type': 'ineq', 'fun': lambda w, i=idxs, l=limit: l - np.sum(w[i])})
+                
+        # Cap Inequalities
+        cap_limits = {"Large": limits.get("cap_large", 0.7), 
+                      "Mid": limits.get("cap_mid", 0.2), 
+                      "Small": limits.get("cap_small", 0.1)}
+        for cap, limit in cap_limits.items():
+            idxs = [i for i, s in enumerate(selected_stocks) if cap_map.get(s, "Large") == cap]
+            if idxs:
+                constraints.append({'type': 'ineq', 'fun': lambda w, i=idxs, l=limit: l - np.sum(w[i])})
 
-    inv_vol = 1 / vol
-    weights = inv_vol / inv_vol.sum()
-
-    return dict(zip(selected_stocks, weights))
+    init_guess = num_assets * [1. / num_assets,]
+    
+    res = minimize(neg_sharpe, init_guess, bounds=bounds, constraints=constraints, method='SLSQP')
+    if res.success:
+        return dict(zip(selected_stocks, res.x))
+    
+    print("⚠️ Markowitz solver failed to converge! Defaulting to HRP Engine.")
+    return _optimize_hrp(prices, selected_stocks)
 
 def apply_turnover_control(old_weights, new_weights, max_turnover=0.3):
     """
@@ -122,6 +224,40 @@ def apply_sector_weight_constraints(weights, sector_map, regime):
         clust_allocs[clust] += allowed
         
     if cash > 0.001:  # Protect against precision drift
+        constrained_weights["CASH"] = cash
+        
+    return constrained_weights
+
+def apply_cap_size_constraints(weights, cap_map, large_limit=0.7, mid_limit=0.2, small_limit=0.1):
+    """
+    Rationally restricts structural capital exposure into highly volatile Mid and Small Cap segments.
+    The excess overflow inherently routes directly back into the CASH preservation mechanic.
+    """
+    cap_allocs = {"Large": 0.0, "Mid": 0.0, "Small": 0.0, "Unknown": 0.0}
+    limits = {"Large": large_limit, "Mid": mid_limit, "Small": small_limit, "Unknown": 1.0}
+    
+    constrained_weights = {}
+    cash = weights.get("CASH", 0.0)
+    
+    stocks = [s for s in weights.keys() if s != "CASH"]
+    sorted_stocks = sorted(stocks, key=lambda k: weights[k], reverse=True)
+    
+    for stock in sorted_stocks:
+        w = weights[stock]
+        size = cap_map.get(stock, "Large")
+        
+        room = max(0.0, limits.get(size, 1.0) - cap_allocs[size])
+        allowed = min(w, room)
+        
+        if allowed < w:
+            cash += (w - allowed)
+            
+        if allowed > 0:
+            constrained_weights[stock] = allowed
+            
+        cap_allocs[size] += allowed
+        
+    if cash > 0.001:
         constrained_weights["CASH"] = cash
         
     return constrained_weights

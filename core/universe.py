@@ -2,8 +2,8 @@ import pandas as pd
 import yfinance as yf
 from concurrent.futures import ThreadPoolExecutor
 
-# Hardcoded Fallback
-FALLBACK_TICKERS = [
+# Hardcoded Fallback Arrays
+FALLBACK_LARGE = [
     "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "ICICIBANK.NS", "BHARTIARTL.NS", "SBIN.NS", 
     "INFY.NS", "LT.NS", "ITC.NS", "BAJFINANCE.NS", "HINDUNILVR.NS", "KOTAKBANK.NS",
     "AXISBANK.NS", "MARUTI.NS", "SUNPHARMA.NS", "ASIANPAINT.NS", "TATAMOTORS.NS", 
@@ -15,29 +15,46 @@ FALLBACK_TICKERS = [
     "UPL.NS", "SHREECEM.NS", "BPCL.NS", "INDUSINDBK.NS", "BAJAJ-AUTO.NS", "NESTLEIND.NS"
 ]
 
-def fetch_broad_universe(source="nifty50"):
-    """
-    Fetch a list of base symbols to serve as the broad universe.
-    Currently attempts to dynamically pull Nifty 50 from Wikipedia, 
-    with a fallback out-of-the-box static list.
-    """
-    if source == "nifty50":
-        try:
-            url = "https://en.wikipedia.org/wiki/NIFTY_50"
-            tables = pd.read_html(url)
-            df = tables[1]  # Typically the constituents table
-            tickers = df['Symbol'].astype(str) + ".NS"
-            return list(set(tickers))
-        except Exception as e:
-            print(f"⚠️ Scraping Wikipedia failed ({e}), using fallback universe.")
-            return FALLBACK_TICKERS
-    
-    return FALLBACK_TICKERS
+FALLBACK_MID = [
+    "HAL.NS", "LICI.NS", "JINDALSTEL.NS", "TVSMOTOR.NS", "PNB.NS", "TRENT.NS", "ZOMATO.NS",
+    "CGPOWER.NS", "BANKBARODA.NS", "CHOLAFIN.NS", "DLF.NS", "GAIL.NS", "VBL.NS", "INDIGO.NS",
+    "AMBUJACEM.NS", "BOSCHLTD.NS", "HAVELLS.NS", "SIEMENS.NS", "IRFC.NS", "PFC.NS", "RECLTD.NS",
+    "SHRIRAMFIN.NS", "GODREJCP.NS", "COLPAL.NS", "DABUR.NS", "PIDILITIND.NS", "ICICIPRULI.NS",
+    "LODHA.NS", "MAXHEALTH.NS", "TORNTPHARM.NS", "AUROPHARMA.NS", "ZYDUSLIFE.NS", "PIIND.NS", 
+    "LUPIN.NS", "INDHOTEL.NS", "CUMMINSIND.NS", "ASHOKLEY.NS", "MRF.NS", "BERGEPAINT.NS"
+]
 
-def _evaluate_fundamentals(ticker):
+FALLBACK_SMALL = [
+    "SUZLON.NS", "BSE.NS", "KALYANKJIL.NS", "ANGELONE.NS", "CDSL.NS", "SONACOMS.NS", 
+    "KEI.NS", "APARINDS.NS", "GLENMARK.NS", "SYNGENE.NS", "AARTIIND.NS", "RADICO.NS",
+    "LAURUSLABS.NS", "JBCHEPHARM.NS", "SUNDARMFIN.NS", "MCX.NS", "POONAWALLA.NS", 
+    "IRB.NS", "RVNL.NS", "IRCON.NS", "MAZDOCK.NS", "COCHINSHIP.NS", "GRSE.NS",
+    "TEJASNET.NS", "ITI.NS", "HFCL.NS", "CYIENT.NS", "KPITTECH.NS", "ZENSARTECH.NS",
+    "BSOFT.NS", "SONATSOFTW.NS", "PERSISTENT.NS", "COFORGE.NS", "MPHASIS.NS",
+    "LALPATHLAB.NS", "METROPOLIS.NS", "NATCOPHARM.NS", "BIOCON.NS", "AJANTPHARM.NS"
+]
+
+def fetch_broad_universe(source="multi_cap"):
+    """
+    Fetch the multi-cap dictionary, tagging stocks by their Size bracket.
+    Fallback matrix returns ~130 robust assets across L, M, and S spectrum.
+    """
+    universe_dict = {}
+    for t in FALLBACK_LARGE:
+        universe_dict[t] = "Large"
+    for t in FALLBACK_MID:
+        universe_dict[t] = "Mid"
+    for t in FALLBACK_SMALL:
+        universe_dict[t] = "Small"
+        
+    return universe_dict
+
+def _evaluate_fundamentals(item):
     """
     Worker function to softly gather all available metrics.
+    item is a tuple of (ticker, size)
     """
+    ticker, size = item
     try:
         info = yf.Ticker(ticker).info
         
@@ -68,7 +85,8 @@ def _evaluate_fundamentals(ticker):
         
         return {
             "Stock": ticker, 
-            "Sector": sector, 
+            "Sector": sector,
+            "Size": size,
             "ROCE": roe, 
             "ProfitGrowth": profit_growth,
             "SalesGrowth": sales_growth,
@@ -80,13 +98,14 @@ def _evaluate_fundamentals(ticker):
     except Exception as e:
         return None
 
-def apply_fundamental_filters(broad_universe, top_percentile=0.3):
-    print(f"🔍 Compiling fundamental matrix for {len(broad_universe)} stocks...")
+def apply_fundamental_filters(universe_dict, top_percentile=0.3):
+    print(f"🔍 Compiling fundamental matrix for {len(universe_dict)} Multi-Cap stocks...")
     
     raw_data = []
+    items = list(universe_dict.items())
     
     with ThreadPoolExecutor(max_workers=10) as executor:
-        results = executor.map(_evaluate_fundamentals, broad_universe)
+        results = executor.map(_evaluate_fundamentals, items)
         
         for res in results:
             if res is not None:
@@ -94,13 +113,15 @@ def apply_fundamental_filters(broad_universe, top_percentile=0.3):
                 
     df = pd.DataFrame(raw_data)
     if df.empty:
-        return [], {}, df
+        return [], {}, {}, df
         
     df["ROCE_rank"] = df["ROCE"].rank(pct=True)
     df["Sales_rank"] = df["SalesGrowth"].rank(pct=True)
     df["Profit_rank"] = df["ProfitGrowth"].rank(pct=True)
     df["Debt_rank"] = df["DebtEquity"].rank(pct=True)
-    df["MarketCap_rank"] = df["MarketCap"].rank(pct=True)
+    
+    # 📌 Perform Segmented Rank for Market Cap (Small caps rank against Small caps!)
+    df["MarketCap_rank"] = df.groupby("Size")["MarketCap"].rank(pct=True)
 
     df["Fundamental_Score"] = (
         0.3 * df["ROCE_rank"] +
@@ -116,7 +137,8 @@ def apply_fundamental_filters(broad_universe, top_percentile=0.3):
     
     investable_tickers = df_selected["Stock"].tolist()
     sector_map = dict(zip(df_selected["Stock"], df_selected["Sector"]))
+    cap_map = dict(zip(df_selected["Stock"], df_selected["Size"]))
     
-    print(f"✅ Fundamental Scoring Complete. Promoted top {cutoff} stocks.")
+    print(f"✅ Fundamental Scoring Complete. Promoted top {cutoff} Multi-Cap stocks.")
     
-    return investable_tickers, sector_map, df
+    return investable_tickers, sector_map, cap_map, df
