@@ -1,6 +1,10 @@
 import pandas as pd
 import yfinance as yf
+from curl_cffi import requests
 from concurrent.futures import ThreadPoolExecutor
+
+# Global session to mimic browser and bypass Yahoo Finance 401/Invalid Crumb errors
+session = requests.Session(impersonate="chrome110")
 
 # Hardcoded Fallback Arrays
 FALLBACK_LARGE = [
@@ -56,7 +60,7 @@ def _evaluate_fundamentals(item):
     """
     ticker, size = item
     try:
-        info = yf.Ticker(ticker).info
+        info = yf.Ticker(ticker, session=session).info
         
         roe = info.get("returnOnEquity")
         if roe is None:

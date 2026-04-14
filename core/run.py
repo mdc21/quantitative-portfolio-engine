@@ -9,6 +9,10 @@ import yfinance as yf
 from core.macro import load_macro_data, compute_macro_regime
 from core.optimizer import apply_macro_overlay, apply_sector_weight_constraints 
 from core.logger import logger
+from curl_cffi import requests
+
+# Global session to mimic browser and bypass Yahoo Finance 401/Invalid Crumb errors
+session = requests.Session(impersonate="chrome110")
 
 # Load config
 with open("config/portfolio_config.yaml") as f:
@@ -24,7 +28,7 @@ tickers, sector_map, cap_map, scoring_df = apply_fundamental_filters(universe_di
 
 capital = config["capital"]
 
-index_data = yf.download("^NSEI", period="6mo")
+index_data = yf.download("^NSEI", period="6mo", session=session)
 if index_data.empty:
     print("Failed to download market data from Yahoo Finance! Continuing without benchmark visualization dependencies...")
     index_prices = None
