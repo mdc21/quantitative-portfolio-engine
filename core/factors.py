@@ -27,7 +27,7 @@ def compute_factor_scores(prices, config):
     # Normalize Volatility
     vol_rank = vol.rank(pct=True)
 
-    # Composite score: high momentum, low volatility
-    score = mom_rank - vol_rank
+    # Composite score: high momentum, low volatility (Normalized 0-1)
+    score = (mom_rank + (1 - vol_rank)) / 2
 
     return score.sort_values(ascending=False)
