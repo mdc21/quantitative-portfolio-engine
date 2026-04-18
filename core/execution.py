@@ -8,19 +8,32 @@ def calculate_portfolio_value(holdings_list, live_prices, fresh_capital=0.0):
     """
     current_value = 0.0
     for hl in holdings_list:
-        ticker = hl.get('Ticker')
-        qty = hl.get('Qty_LongTerm', 0) + hl.get('Qty_ShortTerm', 0)
+        # Robust dictionary key extraction (handles case & spaces)
+        clean_hl = {str(k).strip().lower(): v for k, v in hl.items()}
+        
+        ticker = str(clean_hl.get('ticker', '')).strip().upper()
+        if not ticker:
+            continue
+            
+        # Auto-append .NS for Indian markets if user forgot in CSV
+        if not ticker.endswith(".NS") and not ticker == "CASH":
+            ticker = ticker + ".NS"
+            
+        qty = float(clean_hl.get('qty_longterm', 0) or 0) + float(clean_hl.get('qty_shortterm', 0) or 0)
         
         # Fallback if price is missing or ticker format is weird
-        price = live_prices.get(ticker, 0.0) if hasattr(live_prices, 'get') else (live_prices.loc[ticker] if ticker in live_prices else 0.0)
-        
-        # Explicit type conversion and NaN handling
+        price = 0.0
         try:
-            val = float(price)
-            if math.isnan(val): val = 0.0
-            current_value += (float(qty) * val)
-        except (ValueError, TypeError):
-             pass
+            raw_p = live_prices.get(ticker, 0.0) if hasattr(live_prices, 'get') else (live_prices.loc[ticker] if ticker in live_prices else 0.0)
+            if isinstance(raw_p, pd.Series):
+                 price = float(raw_p.iloc[0])
+            else:
+                 price = float(raw_p)
+            if math.isnan(price): price = 0.0
+        except Exception:
+            pass
+            
+        current_value += (float(qty) * price)
 
     return current_value + float(fresh_capital)
 
@@ -38,20 +51,26 @@ def generate_trade_list(target_weights, holdings_list, live_prices, fresh_capita
     # Map out current holdings for O(1) lookup
     current_map = {}
     for hl in holdings_list:
-        ticker = hl.get('Ticker')
+        clean_hl = {str(k).strip().lower(): v for k, v in hl.items()}
+        ticker = str(clean_hl.get('ticker', '')).strip().upper()
+        if not ticker: continue
+        if not ticker.endswith(".NS") and not ticker == "CASH": ticker = ticker + ".NS"
+            
         current_map[ticker] = {
-            'Qty': float(hl.get('Qty_LongTerm', 0)) + float(hl.get('Qty_ShortTerm', 0)),
-            'Qty_ShortTerm': float(hl.get('Qty_ShortTerm', 0))
+            'Qty': float(clean_hl.get('qty_longterm', 0) or 0) + float(clean_hl.get('qty_shortterm', 0) or 0),
+            'Qty_ShortTerm': float(clean_hl.get('qty_shortterm', 0) or 0)
         }
 
     # Extract single exact series if live_prices is a DataFrame (Yahoo multi-ticker download issue)
     latest_prices = live_prices.iloc[-1] if isinstance(live_prices, pd.DataFrame) else live_prices
 
     # Evaluate target allocations
+    evaluated_tickers = set()
     for ticker, target_weight in target_weights.items():
         if ticker == "CASH":
             continue
             
+        evaluated_tickers.add(ticker)
         current_data = current_map.get(ticker, {'Qty': 0.0, 'Qty_ShortTerm': 0.0})
         current_qty = current_data['Qty']
         
@@ -95,9 +114,16 @@ def generate_trade_list(target_weights, holdings_list, live_prices, fresh_capita
             
     # Also evaluate stocks currently held that dropped out of the Target Weights entirely (Target Weight = 0%)
     for hl in holdings_list:
-        ticker = hl.get('Ticker')
+        clean_hl = {str(k).strip().lower(): v for k, v in hl.items()}
+        ticker = str(clean_hl.get('ticker', '')).strip().upper()
+        if not ticker: continue
+        if not ticker.endswith(".NS") and not ticker == "CASH": ticker = ticker + ".NS"
+        
+        if ticker in evaluated_tickers:
+            continue
+            
         if ticker not in target_weights or target_weights.get(ticker) == 0.0:
-            current_qty = hl.get('Qty_LongTerm', 0) + hl.get('Qty_ShortTerm', 0)
+            current_qty = float(clean_hl.get('qty_longterm', 0) or 0) + float(clean_hl.get('qty_shortterm', 0) or 0)
             if current_qty > 0:
                 
                 price = 0.0
@@ -111,7 +137,7 @@ def generate_trade_list(target_weights, holdings_list, live_prices, fresh_capita
                 except Exception:
                     pass
                     
-                stcg_warning = "⚠️ STCG RISK (Hold < 1Yr)" if hl.get('Qty_ShortTerm', 0) > 0 else ""
+                stcg_warning = "⚠️ STCG RISK (Hold < 1Yr)" if float(clean_hl.get('qty_shortterm', 0) or 0) > 0 else ""
                 
                 trades.append({
                     "Stock": ticker,
