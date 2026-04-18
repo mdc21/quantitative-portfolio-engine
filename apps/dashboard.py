@@ -276,17 +276,60 @@ try:
         else:
             col1, col2 = st.columns([1, 2])
             
+            # --- PORTFOLIO COMPARISON LOGIC ---
+            from core.execution import calculate_portfolio_value
+            from core.ticker_mapper import resolve_ticker
+            
+            # 1. Map Existing Weights
+            existing_values = {}
+            total_existing_value = 0.0
+            latest_prices = prices.iloc[-1] if isinstance(prices, pd.DataFrame) else prices
+            
+            for hl in st.session_state['holdings_list']:
+                cl = {str(k).strip().lower(): v for k, v in hl.items()}
+                rt = str(cl.get('stock_symbol', cl.get('ticker', ''))).strip().upper()
+                ri = str(cl.get('isin_name', cl.get('isin_code', ''))).strip().upper()
+                if rt:
+                    rest, _ = resolve_ticker(rt, isin=ri)
+                    if rest in prices.columns or rest == "CASH":
+                        qty = float(cl.get('qty_longterm', 0) or 0) + float(cl.get('qty_shortterm', 0) or 0)
+                        p = latest_prices[rest] if rest != "CASH" else 1.0
+                        val = qty * p
+                        existing_values[rest] = existing_values.get(rest, 0.0) + val
+                        total_existing_value += val
+            
+            existing_weights = {s: v / total_existing_value for s, v in existing_values.items()} if total_existing_value > 0 else {}
+            
+            # 2. Build Comparison DataFrame
+            all_assets = sorted(list(set(list(weights.keys()) + list(existing_weights.keys()))))
+            comparison_rows = []
+            for asset in all_assets:
+                tw = weights.get(asset, 0.0)
+                ew = existing_weights.get(asset, 0.0)
+                
+                # Apply User Filter: Target Weight > 0.01% (0.0001)
+                # We also keep assets currently held (existing > 0) to ensure transparency of what is being sold/held
+                if tw > 0.0001 or ew > 0.0001:
+                    comparison_rows.append({
+                        "Stock": asset,
+                        "Sector": "Cash / Buffer" if asset == "CASH" else sector_map.get(asset, "Other"),
+                        "Current (%)": round(ew * 100, 2),
+                        "Target (%)": round(tw * 100, 2),
+                        "Delta (%)": round((tw - ew) * 100, 2)
+                    })
+            
+            df_comparison = pd.DataFrame(comparison_rows)
+            if not df_comparison.empty:
+                df_comparison = df_comparison.sort_values(by="Target (%)", ascending=False)
+            
             with col1:
-                st.subheader("Target Allocations")
-            df_weights = pd.DataFrame(weights.items(), columns=["Stock", "Weight(%)"])
-            df_weights["Weight(%)"] = (df_weights["Weight(%)"] * 100).round(2)
-            df_weights["Sector"] = df_weights["Stock"].apply(lambda x: "Cash / Safety Buffer" if x == "CASH" else sector_map.get(x, "Other"))
+                st.subheader("Portfolio Comparison Matrix")
+                st.caption("Comparing your current exposure vs. the optimized quant target. (Filtered for >0.01% weight)")
+                st.dataframe(df_comparison, hide_index=True, height=450, use_container_width=True)
             
-            # Sort heavily allocated stocks to the top
-            df_weights = df_weights.sort_values(by="Weight(%)", ascending=False)
-            
-            # Enforce a tight height bound to trigger the native Streamlit vertical scrollbar
-            st.dataframe(df_weights[["Stock", "Sector", "Weight(%)"]], hide_index=True, height=400)
+            # For the pie chart, we still use the full target weights but filtered for visual clarity
+            df_weights = df_comparison[df_comparison["Target (%)"] > 0].copy()
+            df_weights = df_weights.rename(columns={"Target (%)": "Weight(%)"})
             
             with col2:
                 st.subheader("Exposure Analysis")
