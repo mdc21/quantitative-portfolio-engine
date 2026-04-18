@@ -42,17 +42,17 @@ def test_generate_trade_list_buy_and_sell(dummy_prices):
     
     # Check Reliance Buy
     rel_trade = df_trades[df_trades["Stock"] == "RELIANCE.NS"].iloc[0]
-    assert rel_trade["Action"] == "BUY"
+    assert rel_trade["Action"] == "🟢 BUY"
     assert rel_trade["Shares"] == 10
     
     # Check TCS Buy
     tcs_trade = df_trades[df_trades["Stock"] == "TCS.NS"].iloc[0]
-    assert tcs_trade["Action"] == "BUY"
+    assert tcs_trade["Action"] == "🟢 BUY"
     assert tcs_trade["Shares"] == 3
     
     # Check INFY Sell + Tax Warning
     infy_trade = df_trades[df_trades["Stock"] == "INFY.NS"].iloc[0]
-    assert infy_trade["Action"] == "SELL"
+    assert infy_trade["Action"] == "🔴 SELL"
     assert infy_trade["Shares"] == 20
     assert "STCG" in infy_trade["Tax Indicator"]
 
@@ -100,7 +100,8 @@ def test_generate_trade_list_unresolved_ticker(dummy_prices):
     
     # We expect a row for the obscure broker name
     assert not df_trades.empty
+    assert "Group" in df_trades.columns
     
-    obscure_trade = df_trades[df_trades["Action"] == "Not Available"].iloc[0]
+    obscure_trade = df_trades[df_trades["Action"] == "⚪ N/A"].iloc[0]
     assert "OBSCUREBROKERNAME" in obscure_trade["Stock"]
     assert obscure_trade["Shares"] == 100

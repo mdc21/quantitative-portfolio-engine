@@ -63,5 +63,10 @@ def test_full_pipeline_regression(mocker, mock_fundamental_data, mock_prices):
     # against the newly optimized Markowitz weights
     assert not df_trades.empty, "Execution mapping failed to produce a trade list during pipeline regression."
     assert "Action" in df_trades.columns
+    assert "Group" in df_trades.columns
     assert "Tax Indicator" in df_trades.columns
+    
+    # Verify that groupings are happening (at least one Strategic Exit or Buy should exist in this mock)
+    available_groups = df_trades["Group"].unique()
+    assert any(g in ["Buy Orders", "Strategic Exits", "Rebalance Trims"] for g in available_groups)
     assert any(w > 0 for stock, w in weights.items() if stock != "CASH")

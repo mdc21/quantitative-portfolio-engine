@@ -52,3 +52,5 @@ pytest
 pytest-mock
 pytest-cov
 pre-commit
+bandit
+pip-audit
