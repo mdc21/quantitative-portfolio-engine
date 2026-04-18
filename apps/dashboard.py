@@ -12,6 +12,7 @@ from core.momentum import select_top_momentum, apply_sector_caps
 from core.optimizer import optimize_weights, apply_macro_overlay, apply_turnover_control, apply_sector_weight_constraints, apply_cap_size_constraints
 from core.macro import load_macro_data, compute_macro_regime
 from core.universe import fetch_broad_universe, apply_fundamental_filters
+from core.execution import generate_trade_list
 from core.state import load_portfolio_state, save_portfolio_state
 from core.logger import logger
 
@@ -67,6 +68,20 @@ try:
         prices = prices.drop(columns=["^NSEI"])
         
     # Sidebar
+    st.sidebar.header("Retail Execution (Optional)")
+    portfolio_file = st.sidebar.file_uploader("Upload Current Holdings (CSV)", type=["csv"], help="Expected columns: Ticker, Qty_LongTerm, Qty_ShortTerm")
+    fresh_capital = st.sidebar.number_input("Fresh Capital to Deploy", min_value=0.0, value=0.0, step=1000.0)
+    
+    holdings_list = []
+    if portfolio_file is not None:
+        try:
+            df_holdings = pd.read_csv(portfolio_file)
+            holdings_list = df_holdings.to_dict('records')
+            st.sidebar.success(f"Loaded {len(holdings_list)} legacy positions.")
+        except Exception as e:
+            st.sidebar.error("File parse error. Check strictly for columns: Ticker, Qty_LongTerm, Qty_ShortTerm")
+
+    st.sidebar.markdown("---")
     st.sidebar.header("Strategy Tuning")
     mom_lookback = st.sidebar.slider("Momentum Lookback (Days)", 30, 252, 90, help="Number of trading days to track for historical price momentum. Usually 90-180 days.")
     vol_lookback = st.sidebar.slider("Volatility Lookback (Days)", 30, 252, 60, help="Amount of history used to compute standard deviation. Lower values react faster to market crashes.")
@@ -185,7 +200,7 @@ try:
 
 
     # Tabs Layout
-    tab1, tab2, tab3, tab4 = st.tabs(["🚀 Portfolio Allocation", "📈 Price Action", "🔥 Factor Heatmap", "📊 Fundamental Scoreboard"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["🚀 Portfolio Allocation", "📈 Price Action", "🔥 Factor Heatmap", "📊 Scoreboard", "🛒 Shopping List"])
 
     with tab1:
         with st.expander("💡 Explainability: How was this portfolio selected?"):
@@ -325,6 +340,27 @@ try:
             logger.warning("Empty fundamental matrix detected upon visualization render.")
             st.error("No fundamental data compiled.")
             
+    with tab5:
+        st.subheader("🛒 Execution Engine: Tax-Aware Shopping List")
+        if not holdings_list and fresh_capital <= 0:
+            st.info("💡 **Activate Retail Execution**: Upload your existing portfolio CSV or input Fresh Capital in the sidebar to generate a deterministic integer-share shopping list.")
+        else:
+            with st.spinner("Calculating trade deltas..."):
+                df_trades = generate_trade_list(weights, holdings_list, prices, fresh_capital)
+                
+            if df_trades.empty:
+                st.warning("No actionable trades generated based on current capital and targets.")
+            else:
+                def highlight_tax(s):
+                    return ['color: white; background-color: #ff4b4b; font-weight: bold' if "⚠️" in str(v) else '' for v in s]
+                    
+                st.markdown("This list calculates exactly how many shares you need to buy or sell to reach the mathematical target, accounting for the cash you've added today.")
+                st.dataframe(
+                    df_trades.style.apply(highlight_tax, subset=['Tax Indicator']), 
+                    use_container_width=True,
+                    hide_index=True
+                )
+
     logger.info("Streamlit Application rendered successfully.")
 
 except Exception as e:
