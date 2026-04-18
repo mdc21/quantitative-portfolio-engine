@@ -55,3 +55,30 @@ def test_generate_trade_list_buy_and_sell(dummy_prices):
     assert infy_trade["Action"] == "SELL"
     assert infy_trade["Shares"] == 20
     assert "STCG" in infy_trade["Tax Indicator"]
+
+def test_generate_trade_list_messy_csv_parsing(dummy_prices):
+    """
+    Tests the engine's ability to handle raw spaces, no .NS suffixes, and lowercase keys.
+    """
+    messy_holdings = [
+        {" Ticker  ": "RELIANCE", "qty_longterm": 10, " Qty_ShortTerm ": 5}, # Expected: RELIANCE.NS, 15 qty
+        {"ticker": "tcs", "Qty_LongTerm": 10, "QTY_SHORTTERM": 0}            # Expected: TCS.NS, 10 qty
+    ]
+    
+    # Value = (15 * 2000) + (10 * 3000) = 60000. 
+    # Target 50% / 50% -> 30000 each.
+    # RELIANCE target: 30000/2000 = 15 shares. Current 15. Action: HOLD/None.
+    # TCS target: 30000/3000 = 10 shares. Current 10. Action: HOLD/None.
+    
+    targets = {
+        "RELIANCE.NS": 0.50,
+        "TCS.NS": 0.50
+    }
+    
+    val = calculate_portfolio_value(messy_holdings, dummy_prices)
+    assert val == 60000.0, "Failed to parse messy formats into correct valuation"
+    
+    df_trades = generate_trade_list(targets, messy_holdings, dummy_prices)
+    
+    # Since they perfectly match, there should be no trades needed!
+    assert df_trades.empty, "Generated dummy trades when perfect alignment existed"

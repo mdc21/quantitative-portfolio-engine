@@ -46,6 +46,22 @@ def test_full_pipeline_regression(mocker, mock_fundamental_data, mock_prices):
     weights = optimize_weights(prices, selected, regime, sector_map, cap_map, limits)
     
     # 7. Final Assertions
-    assert sum(weights.values()) <= 1.0001
-    assert all(w >= 0 for w in weights.values())
+    sum_weights = sum(weights.values())
+    assert abs(sum_weights - 1.0) < 0.01, f"Total allocation constraint failed. Sum={sum_weights}"
+    
+    # --- PHASE 6: EXECUTION & RETAIL CSV INTEGRATION ---
+    from core.execution import generate_trade_list
+    
+    dummy_portfolio = [
+        {"Ticker": "RELIANCE", "Qty_LongTerm": 50, "Qty_ShortTerm": 0},
+        {"ticker": "tcs", "qty_longterm": 0, "qty_shortterm": 15}
+    ]
+    
+    df_trades = generate_trade_list(weights, dummy_portfolio, mock_prices, fresh_capital=100000.0)
+    
+    # We should have a valid dataframe (not empty) meaning the engine successfully mapped the dummy portfolio
+    # against the newly optimized Markowitz weights
+    assert not df_trades.empty, "Execution mapping failed to produce a trade list during pipeline regression."
+    assert "Action" in df_trades.columns
+    assert "Tax Indicator" in df_trades.columns
     assert any(w > 0 for stock, w in weights.items() if stock != "CASH")
