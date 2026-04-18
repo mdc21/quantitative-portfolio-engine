@@ -75,7 +75,7 @@ try:
     holdings_list = []
     if portfolio_file is not None:
         try:
-            df_holdings = pd.read_csv(portfolio_file)
+            df_holdings = pd.read_csv(portfolio_file, sep=None, engine='python')
             holdings_list = df_holdings.to_dict('records')
             st.sidebar.success(f"Loaded {len(holdings_list)} legacy positions.")
         except Exception as e:
