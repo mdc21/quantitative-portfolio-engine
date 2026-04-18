@@ -105,3 +105,66 @@ def test_generate_trade_list_unresolved_ticker(dummy_prices):
     obscure_trade = df_trades[df_trades["Action"] == "⚪ N/A"].iloc[0]
     assert "OBSCUREBROKERNAME" in obscure_trade["Stock"]
     assert obscure_trade["Shares"] == 100
+
+def test_generate_trade_list_empty_holdings(dummy_prices):
+    """
+    Verifies that the engine defaults to full fresh capital allocation when no holdings are provided.
+    """
+    empty_holdings = []
+    targets = {
+        "RELIANCE.NS": 0.50,
+        "TCS.NS": 0.50
+    }
+    
+    # Capital: 100000. Targets: 50% each (50000).
+    # RELIANCE: 50000 / 2000 = 25 shares.
+    # TCS: 50000 / 3000 = 16.66 -> 16 shares.
+    
+    df_trades = generate_trade_list(targets, empty_holdings, dummy_prices, fresh_capital=100000.0)
+    
+    assert len(df_trades) == 2
+    assert all(df_trades["Action"] == "🟢 BUY")
+    assert all(df_trades["Group"] == "Buy Orders")
+    
+    rel_trade = df_trades[df_trades["Stock"] == "RELIANCE.NS"].iloc[0]
+    assert rel_trade["Shares"] == 25
+    
+    tcs_trade = df_trades[df_trades["Stock"] == "TCS.NS"].iloc[0]
+    assert tcs_trade["Shares"] == 16
+
+def test_generate_trade_list_grouping_logic(dummy_prices):
+    """
+    Verifies the specific labeling for Strategic Exits, Rebalance Trims, and Buy Orders.
+    """
+    holdings = [
+        {"Ticker": "RELIANCE.NS", "Qty_LongTerm": 100, "Qty_ShortTerm": 0}, # Overweight
+        {"Ticker": "INFY.NS", "Qty_LongTerm": 50, "Qty_ShortTerm": 0}        # Rejected / Outside Universe
+    ]
+    
+    # Total Value: (100*2000) + (50*1500) = 200000 + 75000 = 275000.
+    # New Targets: 
+    # RELIANCE: 10% (Worth 27500 -> 13.75 -> 13 shares). SELL 87.
+    # TCS: 90% (Worth 247500 -> 82.5 -> 82 shares). BUY 82.
+    # INFY: 0% (SELL 50).
+    
+    targets = {
+        "RELIANCE.NS": 0.10,
+        "TCS.NS": 0.90
+    }
+    
+    df_trades = generate_trade_list(targets, holdings, dummy_prices)
+    
+    # RELIANCE should be a "Rebalance Trim" as target weight is > 0.01%
+    rel_trade = df_trades[df_trades["Stock"] == "RELIANCE.NS"].iloc[0]
+    assert rel_trade["Group"] == "Rebalance Trims"
+    assert rel_trade["Action"] == "🔴 SELL"
+    
+    # INFY should be "Unresolved Assets" since it's a dummy ticker that failed confident resolution
+    infy_trade = df_trades[df_trades["Stock"].str.contains("INFY.NS")].iloc[0]
+    assert infy_trade["Group"] == "Unresolved Assets"
+    assert infy_trade["Action"] == "⚪ N/A"
+    
+    # TCS should be "Buy Orders"
+    tcs_trade = df_trades[df_trades["Stock"] == "TCS.NS"].iloc[0]
+    assert tcs_trade["Group"] == "Buy Orders"
+    assert tcs_trade["Action"] == "🟢 BUY"

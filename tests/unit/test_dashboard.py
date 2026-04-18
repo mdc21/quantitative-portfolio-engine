@@ -78,3 +78,26 @@ def test_dashboard_slider_interaction(mocker, mock_fundamental_data, mock_prices
     # Success message for caps should be visible if we didn't touch those
     assert "Portfolio Caps optimally scaled to 100%." in at.sidebar.success[0].value
     assert at.sidebar.success[0].icon == "✅"
+
+def test_dashboard_tab1_comparison_render(mocker, mock_fundamental_data, mock_prices):
+    """
+    Verifies that the new Portfolio Allocation tab contains the dual-view analysis subheader.
+    """
+    mock_repo = pd.DataFrame({"Rate": [6.5, 6.5]}, index=[datetime.now() - pd.Timedelta(days=1), datetime.now()])
+    mock_cpi = pd.DataFrame({"CPI": [5.0, 5.0]}, index=[datetime.now() - pd.Timedelta(days=30), datetime.now()])
+    
+    mocker.patch("core.universe.yf.Ticker", return_value=MockTicker(mock_fundamental_data["RELIANCE.NS"]))
+    mocker.patch("core.data_loader.fetch_prices", return_value=mock_prices)
+    mocker.patch("core.macro.load_macro_data", return_value=(mock_repo, mock_cpi))
+    
+    at = AppTest.from_file("apps/dashboard.py")
+    
+    # 1. Preset the state to skip ingestion and go direct to allocation
+    at.session_state['is_allocated'] = True
+    at.run()
+    
+    # 2. Check tab 1 labels
+    # We look for the newly added subheader "📊 Dual-View Portfolio Analysis"
+    subheaders = [s.value for s in at.get("subheader")]
+    assert "📊 Dual-View Portfolio Analysis" in subheaders
+    assert "📋 Portfolio Comparison Matrix" in subheaders

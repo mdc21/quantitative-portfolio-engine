@@ -274,8 +274,6 @@ try:
         if not st.session_state['is_allocated']:
             st.info("📥 Waiting for Data Ingestion...")
         else:
-            col1, col2 = st.columns([1, 2])
-            
             # --- PORTFOLIO COMPARISON LOGIC ---
             from core.execution import calculate_portfolio_value
             from core.ticker_mapper import resolve_ticker
@@ -307,8 +305,6 @@ try:
                 tw = weights.get(asset, 0.0)
                 ew = existing_weights.get(asset, 0.0)
                 
-                # Apply User Filter: Target Weight > 0.01% (0.0001)
-                # We also keep assets currently held (existing > 0) to ensure transparency of what is being sold/held
                 if tw > 0.0001 or ew > 0.0001:
                     comparison_rows.append({
                         "Stock": asset,
@@ -321,31 +317,47 @@ try:
             df_comparison = pd.DataFrame(comparison_rows)
             if not df_comparison.empty:
                 df_comparison = df_comparison.sort_values(by="Target (%)", ascending=False)
+
+            # --- UI RENDERING ---
+            st.subheader("📊 Dual-View Portfolio Analysis")
+            view_mode = st.radio("Group Breakdown By:", ["Sector", "Asset"], horizontal=True)
             
-            with col1:
-                st.subheader("Portfolio Comparison Matrix")
-                st.caption("Comparing your current exposure vs. the optimized quant target. (Filtered for >0.01% weight)")
-                st.dataframe(df_comparison, hide_index=True, height=450, use_container_width=True)
+            chart_col1, chart_col2 = st.columns(2)
             
-            # For the pie chart, we still use the full target weights but filtered for visual clarity
-            df_weights = df_comparison[df_comparison["Target (%)"] > 0].copy()
-            df_weights = df_weights.rename(columns={"Target (%)": "Weight(%)"})
-            
-            with col2:
-                st.subheader("Exposure Analysis")
-                view_mode = st.radio("Breakdown By:", ["Sector", "Asset"], horizontal=True, label_visibility="collapsed")
-                
-                if view_mode == "Asset":
-                    fig = px.pie(df_weights, values="Weight(%)", names="Stock", hole=0.4, 
-                                 color_discrete_sequence=px.colors.qualitative.Pastel)
+            # Helper to generate pie data based on view mode
+            def get_pie_data(weight_dict):
+                df = pd.DataFrame(weight_dict.items(), columns=["Stock", "Weight(%)"])
+                df["Weight(%)"] = (df["Weight(%)"] * 100).round(2)
+                df["Sector"] = df["Stock"].apply(lambda x: "Cash / Safety Buffer" if x == "CASH" else sector_map.get(x, "Other"))
+                if view_mode == "Sector":
+                    return df.groupby("Sector", as_index=False)["Weight(%)"].sum(), "Sector", px.colors.qualitative.Vivid
                 else:
-                    df_sectors = df_weights.groupby("Sector", as_index=False)["Weight(%)"].sum()
-                    fig = px.pie(df_sectors, values="Weight(%)", names="Sector", hole=0.4, 
-                                 color_discrete_sequence=px.colors.qualitative.Vivid)
-                                 
-                fig.update_traces(textposition='inside', textinfo='percent+label')
-                fig.update_layout(margin=dict(t=10, b=20, l=10, r=10), height=380)
-                st.plotly_chart(fig, use_container_width=True)
+                    return df[df["Weight(%)"] > 0], "Stock", px.colors.qualitative.Pastel
+
+            with chart_col1:
+                st.caption("Current Portfolio Exposure")
+                df_curr, name_col, colors = get_pie_data(existing_weights)
+                if not df_curr.empty:
+                    fig_curr = px.pie(df_curr, values="Weight(%)", names=name_col, hole=0.4, color_discrete_sequence=colors)
+                    fig_curr.update_layout(margin=dict(t=0, b=0, l=0, r=0), height=300, showlegend=False)
+                    st.plotly_chart(fig_curr, use_container_width=True)
+                else:
+                    st.info("No existing holdings detected.")
+
+            with chart_col2:
+                st.caption("Quant Target Exposure")
+                df_tgt, name_col, colors = get_pie_data(weights)
+                if not df_tgt.empty:
+                    fig_tgt = px.pie(df_tgt, values="Weight(%)", names=name_col, hole=0.4, color_discrete_sequence=colors)
+                    fig_tgt.update_layout(margin=dict(t=0, b=0, l=0, r=0), height=300, showlegend=False)
+                    st.plotly_chart(fig_tgt, use_container_width=True)
+                else:
+                    st.error("Target allocation could not be generated.")
+
+            st.markdown("---")
+            st.subheader("📋 Portfolio Comparison Matrix")
+            st.caption("Comparative breakdown of current vs. target weights (Filtered for >0.01% weight)")
+            st.dataframe(df_comparison, hide_index=True, use_container_width=True)
 
     with tab2:
         if not st.session_state['is_allocated']:
