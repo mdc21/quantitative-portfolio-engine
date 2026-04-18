@@ -188,6 +188,18 @@ try:
     tab1, tab2, tab3, tab4 = st.tabs(["🚀 Portfolio Allocation", "📈 Price Action", "🔥 Factor Heatmap", "📊 Fundamental Scoreboard"])
 
     with tab1:
+        with st.expander("💡 Explainability: How was this portfolio selected?"):
+            final_stock_count = len([s for s, w in weights.items() if w > 0.001 and s != "CASH"])
+            cash_w = weights.get("CASH", 0.0) * 100
+            st.markdown(f"""
+            **The quantitative engine acts as a ruthless filter, removing weak assets at every mathematical layer:**
+            - 🏢 **Starting Universe**: `{len(scoring_df)}` stocks analyzed for structural financial health.
+            - 🥇 **Fundamental Screen**: `{len(tickers)}` stocks survived by ranking in the top tier for ROCE, Profit Growth, and low Debt.
+            - 📈 **Momentum Cutoff**: `{len(selected_raw)}` stocks retained for exhibiting confirming multi-timeframe price momentum.
+            - 🛡️ **Sector Caps**: Trimmed down to `{len(selected)}` finalists to prevent extreme cluster correlation.
+            - ⚖️ **Optimization ({regime['optimization_mode']})**: Finalized `{final_stock_count}` precise asset allocations. `{cash_w:.1f}%` of the portfolio was systematically routed to `CASH` to prevent breaching maximum mathematical limits.
+            """)
+
         col1, col2 = st.columns([1, 2])
         
         with col1:
