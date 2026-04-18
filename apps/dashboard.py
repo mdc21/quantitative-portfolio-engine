@@ -75,7 +75,18 @@ try:
     holdings_list = []
     if portfolio_file is not None:
         try:
-            df_holdings = pd.read_csv(portfolio_file, sep=None, engine='python')
+            # Read explicitly. If it fails due to tabs, fallback to reading with \t
+            try:
+                df_holdings = pd.read_csv(portfolio_file)
+            except Exception:
+                portfolio_file.seek(0)
+                df_holdings = pd.read_csv(portfolio_file, sep='\t')
+                
+            if len(df_holdings.columns) == 1:
+                # Attempt to catch tab-delimiters hidden behind commas
+                portfolio_file.seek(0)
+                df_holdings = pd.read_csv(portfolio_file, sep='\t')
+                
             holdings_list = df_holdings.to_dict('records')
             st.sidebar.success(f"Loaded {len(holdings_list)} legacy positions.")
         except Exception as e:
