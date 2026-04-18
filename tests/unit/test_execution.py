@@ -82,3 +82,25 @@ def test_generate_trade_list_messy_csv_parsing(dummy_prices):
     
     # Since they perfectly match, there should be no trades needed!
     assert df_trades.empty, "Generated dummy trades when perfect alignment existed"
+
+def test_generate_trade_list_unresolved_ticker(dummy_prices):
+    """
+    Tests that significantly deformed tickers failing heuristic resolution output 'Not Available' instead of a pure sell.
+    """
+    messy_holdings = [
+        {"Ticker": "OBSCUREBROKERNAME", "Qty_LongTerm": 100, "Qty_ShortTerm": 0}
+    ]
+    
+    # Target some valid stock
+    targets = {
+        "RELIANCE.NS": 1.0
+    }
+    
+    df_trades = generate_trade_list(targets, messy_holdings, dummy_prices, fresh_capital=10000.0)
+    
+    # We expect a row for the obscure broker name
+    assert not df_trades.empty
+    
+    obscure_trade = df_trades[df_trades["Action"] == "Not Available"].iloc[0]
+    assert "OBSCUREBROKERNAME" in obscure_trade["Stock"]
+    assert obscure_trade["Shares"] == 100

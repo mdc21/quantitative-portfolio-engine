@@ -1,5 +1,6 @@
 import pandas as pd
 import math
+from core.ticker_mapper import resolve_ticker
 
 def calculate_portfolio_value(holdings_list, live_prices, fresh_capital=0.0):
     """
@@ -11,13 +12,11 @@ def calculate_portfolio_value(holdings_list, live_prices, fresh_capital=0.0):
         # Robust dictionary key extraction (handles case & spaces)
         clean_hl = {str(k).strip().lower(): v for k, v in hl.items()}
         
-        ticker = str(clean_hl.get('ticker', '')).strip().upper()
-        if not ticker:
+        raw_ticker = str(clean_hl.get('ticker', '')).strip().upper()
+        if not raw_ticker:
             continue
             
-        # Auto-append .NS for Indian markets if user forgot in CSV
-        if not ticker.endswith(".NS") and not ticker == "CASH":
-            ticker = ticker + ".NS"
+        ticker, is_confident = resolve_ticker(raw_ticker)
             
         qty = float(clean_hl.get('qty_longterm', 0) or 0) + float(clean_hl.get('qty_shortterm', 0) or 0)
         
@@ -52,13 +51,16 @@ def generate_trade_list(target_weights, holdings_list, live_prices, fresh_capita
     current_map = {}
     for hl in holdings_list:
         clean_hl = {str(k).strip().lower(): v for k, v in hl.items()}
-        ticker = str(clean_hl.get('ticker', '')).strip().upper()
-        if not ticker: continue
-        if not ticker.endswith(".NS") and not ticker == "CASH": ticker = ticker + ".NS"
+        raw_ticker = str(clean_hl.get('ticker', '')).strip().upper()
+        if not raw_ticker: continue
+        
+        ticker, is_confident = resolve_ticker(raw_ticker)
             
         current_map[ticker] = {
             'Qty': float(clean_hl.get('qty_longterm', 0) or 0) + float(clean_hl.get('qty_shortterm', 0) or 0),
-            'Qty_ShortTerm': float(clean_hl.get('qty_shortterm', 0) or 0)
+            'Qty_ShortTerm': float(clean_hl.get('qty_shortterm', 0) or 0),
+            'Original_Ticker': raw_ticker,
+            'Is_Confident': is_confident
         }
 
     # Extract single exact series if live_prices is a DataFrame (Yahoo multi-ticker download issue)
@@ -115,15 +117,33 @@ def generate_trade_list(target_weights, holdings_list, live_prices, fresh_capita
     # Also evaluate stocks currently held that dropped out of the Target Weights entirely (Target Weight = 0%)
     for hl in holdings_list:
         clean_hl = {str(k).strip().lower(): v for k, v in hl.items()}
-        ticker = str(clean_hl.get('ticker', '')).strip().upper()
-        if not ticker: continue
-        if not ticker.endswith(".NS") and not ticker == "CASH": ticker = ticker + ".NS"
+        raw_ticker = str(clean_hl.get('ticker', '')).strip().upper()
+        if not raw_ticker: continue
+        
+        ticker, is_confident = resolve_ticker(raw_ticker)
         
         if ticker in evaluated_tickers:
             continue
             
+        current_qty = float(clean_hl.get('qty_longterm', 0) or 0) + float(clean_hl.get('qty_shortterm', 0) or 0)
+        stcg_warning = "⚠️ STCG RISK (Hold < 1Yr)" if float(clean_hl.get('qty_shortterm', 0) or 0) > 0 else ""
+        
+        if not is_confident:
+            if current_qty > 0:
+                trades.append({
+                    "Stock": raw_ticker + " (Unresolved)",
+                    "Action": "Not Available",
+                    "Shares": int(current_qty),
+                    "Current Price": 0.0,
+                    "Est. Value": 0.0,
+                    "Target Weight": "Unknown",
+                    "Tax Indicator": ""
+                })
+            # Prevent re-evaluating the same raw ticker later
+            evaluated_tickers.add(ticker)
+            continue
+            
         if ticker not in target_weights or target_weights.get(ticker) == 0.0:
-            current_qty = float(clean_hl.get('qty_longterm', 0) or 0) + float(clean_hl.get('qty_shortterm', 0) or 0)
             if current_qty > 0:
                 
                 price = 0.0
@@ -137,8 +157,6 @@ def generate_trade_list(target_weights, holdings_list, live_prices, fresh_capita
                 except Exception:
                     pass
                     
-                stcg_warning = "⚠️ STCG RISK (Hold < 1Yr)" if float(clean_hl.get('qty_shortterm', 0) or 0) > 0 else ""
-                
                 trades.append({
                     "Stock": ticker,
                     "Action": "SELL",
