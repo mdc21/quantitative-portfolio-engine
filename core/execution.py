@@ -47,6 +47,31 @@ def calculate_portfolio_value(holdings_list, live_prices, fresh_capital=0.0):
 
     return current_value + float(fresh_capital)
 
+def calculate_likely_tax(current_price, avg_buy_price, qty_to_sell, qty_longterm, qty_shortterm):
+    """
+    Calculates estimated capital gains tax (LTCG 12.5% | STCG 20%) assuming 
+    Tax-Optimized FIFO (selling Long Term shares first).
+    """
+    if avg_buy_price <= 0 or qty_to_sell <= 0:
+        return 0, ""
+
+    gain_per_share = current_price - avg_buy_price
+    if gain_per_share <= 0:
+        return 0, "📉 No Tax (Loss)"
+
+    # Sell Long Term first
+    lt_shares_sold = min(qty_to_sell, qty_longterm)
+    st_shares_sold = max(0, qty_to_sell - lt_shares_sold)
+
+    lt_tax = lt_shares_sold * gain_per_share * 0.125
+    st_tax = st_shares_sold * gain_per_share * 0.20
+    
+    total_tax = round(lt_tax + st_tax)
+    
+    if total_tax > 0:
+        return total_tax, f"₹{total_tax:,} Est. Tax"
+    return 0, "No Tax"
+
 def generate_trade_list(target_weights, holdings_list, live_prices, fresh_capital=0.0, assessed_tickers=None):
     """
     Translates abstract percentage weights into hard integer share quantities.
@@ -73,7 +98,9 @@ def generate_trade_list(target_weights, holdings_list, live_prices, fresh_capita
             
         current_map[ticker] = {
             'Qty': float(clean_hl.get('qty_longterm', 0) or 0) + float(clean_hl.get('qty_shortterm', 0) or 0),
+            'Qty_LongTerm': float(clean_hl.get('qty_longterm', 0) or 0),
             'Qty_ShortTerm': float(clean_hl.get('qty_shortterm', 0) or 0),
+            'Avg_Buy_Price': float(clean_hl.get('avg_buy_price', 0) or 0),
             'Original_Ticker': raw_ticker,
             'Original_ISIN': raw_isin,
             'Is_Confident': is_confident
@@ -89,7 +116,7 @@ def generate_trade_list(target_weights, holdings_list, live_prices, fresh_capita
             continue
             
         evaluated_tickers.add(ticker)
-        current_data = current_map.get(ticker, {'Qty': 0.0, 'Qty_ShortTerm': 0.0})
+        current_data = current_map.get(ticker, {'Qty': 0.0, 'Qty_ShortTerm': 0.0, 'Qty_LongTerm': 0.0, 'Avg_Buy_Price': 0.0})
         current_qty = current_data['Qty']
         
         # Extract scalar price
@@ -121,10 +148,19 @@ def generate_trade_list(target_weights, holdings_list, live_prices, fresh_capita
         if delta_qty != 0:
             action = "BUY" if delta_qty > 0 else "SELL"
             
-            # Tax Shield Logic
-            stcg_warning = ""
-            if action == "SELL" and current_data['Qty_ShortTerm'] > 0:
-                stcg_warning = "⚠️ STCG RISK (Hold < 1Yr)"
+            # Tax Calculation For Sells
+            tax_label = ""
+            if action == "SELL":
+                if current_data['Avg_Buy_Price'] > 0:
+                    _, tax_label = calculate_likely_tax(
+                        price, 
+                        current_data['Avg_Buy_Price'], 
+                        abs(delta_qty), 
+                        current_data['Qty_LongTerm'], 
+                        current_data['Qty_ShortTerm']
+                    )
+                else:
+                    tax_label = "⚠️ No Buy Price"
             
             action_label = "🟢 BUY" if action == "BUY" else "🔴 SELL"
             if action == "BUY":
@@ -142,7 +178,7 @@ def generate_trade_list(target_weights, holdings_list, live_prices, fresh_capita
                 "Current Price": round(price, 2),
                 "Est. Value": round(abs(delta_qty) * price, 2),
                 "Target Weight": f"{target_weight * 100:.2f}%",
-                "Tax Indicator": stcg_warning
+                "Tax Indicator": tax_label
             })
             
     # Also evaluate stocks currently held that dropped out of the Target Weights entirely (Target Weight = 0%)
@@ -159,17 +195,37 @@ def generate_trade_list(target_weights, holdings_list, live_prices, fresh_capita
             continue
             
         current_qty = float(clean_hl.get('qty_longterm', 0) or 0) + float(clean_hl.get('qty_shortterm', 0) or 0)
-        stcg_warning = "⚠️ STCG RISK (Hold < 1Yr)" if float(clean_hl.get('qty_shortterm', 0) or 0) > 0 else ""
+        qty_lt = float(clean_hl.get('qty_longterm', 0) or 0)
+        qty_st = float(clean_hl.get('qty_shortterm', 0) or 0)
+        avg_price = float(clean_hl.get('avg_buy_price', 0) or 0)
         
         if not is_confident:
             if current_qty > 0:
                 # Check if it was in the scanned universe
                 label = raw_ticker + " (Unresolved)"
+                price = 0.0
+                try:
+                    raw_p = latest_prices.get(ticker, 0.0)
+                    if isinstance(raw_p, pd.Series):
+                         price = float(raw_p.iloc[0])
+                    else:
+                         price = float(raw_p)
+                    if math.isnan(price): price = 0.0
+                except:
+                    pass
+
                 if raw_isin:
                     if any(t.startswith(raw_ticker) for t in assessed_tickers):
                          label = raw_ticker + " (Outside Active Universe)"
                     else:
                          label = raw_ticker + " (Unresolved / Not Assessed)"
+                else:
+                     label = raw_ticker + " (Unresolved / Not Assessed)"
+
+                # Still calculate tax if we have the data
+                unresolved_tax = ""
+                if avg_price > 0:
+                    _, unresolved_tax = calculate_likely_tax(price, avg_price, current_qty, qty_lt, qty_st)
 
                 trades.append({
                     "Stock": label,
@@ -177,10 +233,10 @@ def generate_trade_list(target_weights, holdings_list, live_prices, fresh_capita
                     "Action": "⚪ N/A",
                     "Group": "Unresolved Assets",
                     "Shares": int(current_qty),
-                    "Current Price": 0.0,
-                    "Est. Value": 0.0,
+                    "Current Price": round(price, 2),
+                    "Est. Value": round(current_qty * price, 2),
                     "Target Weight": "Unknown",
-                    "Tax Indicator": ""
+                    "Tax Indicator": unresolved_tax
                 })
             # Prevent re-evaluating the same raw ticker later
             evaluated_tickers.add(ticker)
@@ -205,6 +261,13 @@ def generate_trade_list(target_weights, holdings_list, live_prices, fresh_capita
                 except Exception as e:
                     logger.error(f"[Trade.Sell] Error matching price for {ticker}: {e}")
                     pass
+                
+                # Tax calculation for liquidations
+                tax_label = ""
+                if avg_price > 0:
+                    _, tax_label = calculate_likely_tax(price, avg_price, current_qty, qty_lt, qty_st)
+                else:
+                    tax_label = "⚠️ No Buy Price"
                     
                 # Labeling: Rejected vs Outside Universe
                 display_name = ticker
@@ -222,7 +285,7 @@ def generate_trade_list(target_weights, holdings_list, live_prices, fresh_capita
                     "Current Price": round(price, 2),
                     "Est. Value": round(current_qty * price, 2),
                     "Target Weight": "0.00%",
-                    "Tax Indicator": stcg_warning
+                    "Tax Indicator": tax_label
                 })
 
     # Sort so BUYs are together, SELLs together

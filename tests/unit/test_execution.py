@@ -21,8 +21,8 @@ def test_calculate_portfolio_value(dummy_prices):
 
 def test_generate_trade_list_buy_and_sell(dummy_prices):
     holdings = [
-        {"Ticker": "RELIANCE.NS", "Qty_LongTerm": 10, "Qty_ShortTerm": 0}, # Worth 20000
-        {"Ticker": "INFY.NS", "Qty_LongTerm": 0, "Qty_ShortTerm": 20}      # Worth 30000 (Short term)
+        {"Ticker": "RELIANCE.NS", "Qty_LongTerm": 10, "Qty_ShortTerm": 0, "Avg_Buy_Price": 1000.0}, # Worth 20000
+        {"Ticker": "INFY.NS", "Qty_LongTerm": 0, "Qty_ShortTerm": 20, "Avg_Buy_Price": 1000.0}      # Worth 30000 (Short term)
     ]
     
     # Portfolio total = 50000. No fresh capital.
@@ -50,11 +50,11 @@ def test_generate_trade_list_buy_and_sell(dummy_prices):
     assert tcs_trade["Action"] == "🟢 BUY"
     assert tcs_trade["Shares"] == 3
     
-    # Check INFY Sell + Tax Warning
-    infy_trade = df_trades[df_trades["Stock"] == "INFY.NS"].iloc[0]
+    # Check INFY Sell + Tax Amount (Qty 20 * (1500-1000) * 20% = 2000 tax)
+    infy_trade = df_trades[df_trades["Stock"].str.contains("INFY.NS")].iloc[0]
     assert infy_trade["Action"] == "🔴 SELL"
     assert infy_trade["Shares"] == 20
-    assert "STCG" in infy_trade["Tax Indicator"]
+    assert "₹2,000 Est. Tax" in infy_trade["Tax Indicator"]
 
 def test_generate_trade_list_messy_csv_parsing(dummy_prices):
     """
@@ -168,3 +168,48 @@ def test_generate_trade_list_grouping_logic(dummy_prices):
     tcs_trade = df_trades[df_trades["Stock"] == "TCS.NS"].iloc[0]
     assert tcs_trade["Group"] == "Buy Orders"
     assert tcs_trade["Action"] == "🟢 BUY"
+
+def test_generate_trade_list_tax_calculation(dummy_prices):
+    """
+    Verifies the tax calculation logic for SELL trades.
+    """
+    holdings = [
+        {
+            "Ticker": "RELIANCE.NS", 
+            "Qty_LongTerm": 10,  # Gain: (2000-1000)*10 = 10000. Tax: 10000 * 12.5% = 1250
+            "Qty_ShortTerm": 10, # Gain: (2000-1000)*10 = 10000. Tax: 10000 * 20% = 2000
+            "Avg_Buy_Price": 1000.0
+        }
+    ]
+    
+    # Portfolio Value: 20 * 2000 = 40000.
+    # Target: 0%. Full Exit.
+    targets = {} 
+    
+    df_trades = generate_trade_list(targets, holdings, dummy_prices)
+    
+    assert not df_trades.empty
+    trade = df_trades.iloc[0]
+    assert trade["Action"] == "⚪ N/A"
+    
+    # Total Tax: 1250 (LT) + 2000 (ST) = 3250
+    assert "₹3,250 Est. Tax" in trade["Tax Indicator"]
+
+def test_generate_trade_list_tax_loss_harvesting(dummy_prices):
+    """
+    Verifies that no tax is calculated for trades with a capital loss.
+    """
+    holdings = [
+        {
+            "Ticker": "TCS.NS", 
+            "Qty_LongTerm": 10, # Price: 3000. Buy: 4000. Loss!
+            "Qty_ShortTerm": 0,
+            "Avg_Buy_Price": 4000.0
+        }
+    ]
+    
+    targets = {}
+    df_trades = generate_trade_list(targets, holdings, dummy_prices)
+    
+    trade = df_trades.iloc[0]
+    assert "📉 No Tax (Loss)" in trade["Tax Indicator"]

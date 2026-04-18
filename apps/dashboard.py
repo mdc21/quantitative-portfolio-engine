@@ -221,7 +221,7 @@ try:
         
         col_ing_1, col_ing_2 = st.columns(2)
         with col_ing_1:
-            portfolio_file = st.file_uploader("Upload Current Holdings (CSV)", type=["csv"], help="Expected columns: stock_symbol, isin_name, qty_longterm, qty_shortterm")
+            portfolio_file = st.file_uploader("Upload Current Holdings (CSV)", type=["csv"], help="Expected columns: stock_symbol, isin_name, qty_longterm, qty_shortterm, avg_buy_price")
             if portfolio_file is not None:
                 try:
                     import io
@@ -244,7 +244,7 @@ try:
 
         with col_ing_2:
             st.session_state['fresh_capital'] = st.number_input("Fresh Capital to Deploy (₹)", min_value=0.0, value=st.session_state.get('fresh_capital', 0.0), step=1000.0)
-            st.info("💡 **Tip:** If you have zero existing holdings, the engine will allocate the entire Fresh Capital amount into the model's top performers.")
+            st.info("💡 **Tax Tip:** Including an `avg_buy_price` column in your upload enables the execution engine to calculate precise STCG/LTCG liabilities for all trade recommendations.")
 
         st.markdown("---")
         if st.button("🚀 Review Portfolio & Allocate Investment", use_container_width=True):
