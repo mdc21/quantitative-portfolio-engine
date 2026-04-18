@@ -206,18 +206,29 @@ try:
             st.subheader("Target Allocations")
             df_weights = pd.DataFrame(weights.items(), columns=["Stock", "Weight(%)"])
             df_weights["Weight(%)"] = (df_weights["Weight(%)"] * 100).round(2)
+            df_weights["Sector"] = df_weights["Stock"].apply(lambda x: "Cash / Safety Buffer" if x == "CASH" else sector_map.get(x, "Other"))
             
             # Sort heavily allocated stocks to the top
             df_weights = df_weights.sort_values(by="Weight(%)", ascending=False)
             
             # Enforce a tight height bound to trigger the native Streamlit vertical scrollbar
-            st.dataframe(df_weights, hide_index=True, height=400)
+            st.dataframe(df_weights[["Stock", "Sector", "Weight(%)"]], hide_index=True, height=400)
             
         with col2:
-            fig = px.pie(df_weights, values="Weight(%)", names="Stock", hole=0.4, 
-                         title="Capital Distribution", color_discrete_sequence=px.colors.qualitative.Pastel)
+            st.subheader("Exposure Analysis")
+            view_mode = st.radio("Breakdown By:", ["Sector", "Asset"], horizontal=True, label_visibility="collapsed")
+            
+            if view_mode == "Asset":
+                fig = px.pie(df_weights, values="Weight(%)", names="Stock", hole=0.4, 
+                             color_discrete_sequence=px.colors.qualitative.Pastel)
+            else:
+                df_sectors = df_weights.groupby("Sector", as_index=False)["Weight(%)"].sum()
+                fig = px.pie(df_sectors, values="Weight(%)", names="Sector", hole=0.4, 
+                             color_discrete_sequence=px.colors.qualitative.Vivid)
+                             
             fig.update_traces(textposition='inside', textinfo='percent+label')
-            st.plotly_chart(fig, width='stretch')
+            fig.update_layout(margin=dict(t=10, b=20, l=10, r=10), height=380)
+            st.plotly_chart(fig, use_container_width=True)
 
     with tab2:
         st.subheader("Historical Alpha Generation (6-Month)")
