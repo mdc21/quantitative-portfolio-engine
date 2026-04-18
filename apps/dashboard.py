@@ -75,18 +75,20 @@ try:
     holdings_list = []
     if portfolio_file is not None:
         try:
+            import io
+            raw_content = portfolio_file.getvalue().decode("utf-8")
+            
             # Read explicitly. If it fails due to tabs, fallback to reading with \t
             try:
-                df_holdings = pd.read_csv(portfolio_file)
+                df_holdings = pd.read_csv(io.StringIO(raw_content))
             except Exception:
-                portfolio_file.seek(0)
-                df_holdings = pd.read_csv(portfolio_file, sep='\t')
+                df_holdings = pd.read_csv(io.StringIO(raw_content), sep='\t')
                 
             if len(df_holdings.columns) == 1:
-                # Attempt to catch tab-delimiters hidden behind commas
-                portfolio_file.seek(0)
-                df_holdings = pd.read_csv(portfolio_file, sep='\t')
+                df_holdings = pd.read_csv(io.StringIO(raw_content), sep='\t')
                 
+            # Pandas can inject np.nan for empty rows, force them to empty string '' so Python doesn't evaluate them as None
+            df_holdings = df_holdings.fillna('')
             holdings_list = df_holdings.to_dict('records')
             st.sidebar.success(f"Loaded {len(holdings_list)} legacy positions.")
         except Exception as e:
@@ -352,7 +354,8 @@ try:
             st.error("No fundamental data compiled.")
             
     with tab5:
-        st.subheader("🛒 Execution Engine: Tax-Aware Shopping List")
+        from core.ticker_mapper import ISIN_MAP
+        st.subheader(f"🛒 Execution Engine: Tax-Aware Shopping List (ISIN DB: {len(ISIN_MAP)} entries)")
         if not holdings_list and fresh_capital <= 0:
             st.info("💡 **Activate Retail Execution**: Upload your existing portfolio CSV or input Fresh Capital in the sidebar to generate a deterministic integer-share shopping list.")
         else:
