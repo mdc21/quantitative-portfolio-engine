@@ -1,7 +1,20 @@
 import pandas as pd
+import os
+import logging
 from core.universe import FALLBACK_LARGE, FALLBACK_MID, FALLBACK_SMALL
 
+logger = logging.getLogger(__name__)
+
 UNIVERSES = FALLBACK_LARGE + FALLBACK_MID + FALLBACK_SMALL
+
+ISIN_MAP = {}
+try:
+    _csv_path = os.path.join(os.path.dirname(__file__), '../data/isin_master.csv')
+    if os.path.exists(_csv_path):
+        _df = pd.read_csv(_csv_path, usecols=["SYMBOL", "ISIN NO"])
+        ISIN_MAP = dict(zip(_df["ISIN NO"], _df["SYMBOL"] + ".NS"))
+except Exception as e:
+    logger.warning(f"Could not load ISIN Master CSV: {e}")
 
 # A heuristic dictionary for the most heavily mangled common broker acronyms
 MANUAL_BROKER_MAP = {
@@ -62,11 +75,17 @@ MANUAL_BROKER_MAP = {
     "ZOMATO": "ZOMATO.NS"
 }
 
-def resolve_ticker(raw_ticker):
+def resolve_ticker(raw_ticker, isin=None):
     """
     Attempts to map a broker-specific mangled ticker into a valid Yahoo Finance NSE ticker.
+    Prioritizes ISIN lookup if available.
     Returns: (mapped_ticker, is_confident_boolean)
     """
+    if isin:
+        clean_isin = str(isin).strip().upper()
+        if clean_isin in ISIN_MAP:
+            return ISIN_MAP[clean_isin], True
+            
     clean = str(raw_ticker).strip().upper()
     if not clean:
         return raw_ticker, False

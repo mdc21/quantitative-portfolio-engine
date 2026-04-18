@@ -88,7 +88,7 @@ def test_generate_trade_list_unresolved_ticker(dummy_prices):
     Tests that significantly deformed tickers failing heuristic resolution output 'Not Available' instead of a pure sell.
     """
     messy_holdings = [
-        {"Ticker": "OBSCUREBROKERNAME", "Qty_LongTerm": 100, "Qty_ShortTerm": 0}
+        {"stock_symbol": "OBSCUREBROKERNAME", "isin_name": "INE12345678", "qty_longterm": 100, "qty_shortterm": 0}
     ]
     
     # Target some valid stock

@@ -12,11 +12,12 @@ def calculate_portfolio_value(holdings_list, live_prices, fresh_capital=0.0):
         # Robust dictionary key extraction (handles case & spaces)
         clean_hl = {str(k).strip().lower(): v for k, v in hl.items()}
         
-        raw_ticker = str(clean_hl.get('ticker', '')).strip().upper()
+        raw_ticker = str(clean_hl.get('stock_symbol', clean_hl.get('ticker', ''))).strip().upper()
+        raw_isin = str(clean_hl.get('isin_name', '')).strip().upper()
         if not raw_ticker:
             continue
             
-        ticker, is_confident = resolve_ticker(raw_ticker)
+        ticker, is_confident = resolve_ticker(raw_ticker, isin=raw_isin)
             
         qty = float(clean_hl.get('qty_longterm', 0) or 0) + float(clean_hl.get('qty_shortterm', 0) or 0)
         
@@ -51,15 +52,17 @@ def generate_trade_list(target_weights, holdings_list, live_prices, fresh_capita
     current_map = {}
     for hl in holdings_list:
         clean_hl = {str(k).strip().lower(): v for k, v in hl.items()}
-        raw_ticker = str(clean_hl.get('ticker', '')).strip().upper()
+        raw_ticker = str(clean_hl.get('stock_symbol', clean_hl.get('ticker', ''))).strip().upper()
+        raw_isin = str(clean_hl.get('isin_name', '')).strip().upper()
         if not raw_ticker: continue
         
-        ticker, is_confident = resolve_ticker(raw_ticker)
+        ticker, is_confident = resolve_ticker(raw_ticker, isin=raw_isin)
             
         current_map[ticker] = {
             'Qty': float(clean_hl.get('qty_longterm', 0) or 0) + float(clean_hl.get('qty_shortterm', 0) or 0),
             'Qty_ShortTerm': float(clean_hl.get('qty_shortterm', 0) or 0),
             'Original_Ticker': raw_ticker,
+            'Original_ISIN': raw_isin,
             'Is_Confident': is_confident
         }
 
@@ -106,6 +109,7 @@ def generate_trade_list(target_weights, holdings_list, live_prices, fresh_capita
                 
             trades.append({
                 "Stock": ticker,
+                "ISIN": current_data.get('Original_ISIN', ''),
                 "Action": action,
                 "Shares": abs(int(delta_qty)),
                 "Current Price": round(price, 2),
@@ -117,10 +121,11 @@ def generate_trade_list(target_weights, holdings_list, live_prices, fresh_capita
     # Also evaluate stocks currently held that dropped out of the Target Weights entirely (Target Weight = 0%)
     for hl in holdings_list:
         clean_hl = {str(k).strip().lower(): v for k, v in hl.items()}
-        raw_ticker = str(clean_hl.get('ticker', '')).strip().upper()
+        raw_ticker = str(clean_hl.get('stock_symbol', clean_hl.get('ticker', ''))).strip().upper()
+        raw_isin = str(clean_hl.get('isin_name', '')).strip().upper()
         if not raw_ticker: continue
         
-        ticker, is_confident = resolve_ticker(raw_ticker)
+        ticker, is_confident = resolve_ticker(raw_ticker, isin=raw_isin)
         
         if ticker in evaluated_tickers:
             continue
@@ -132,6 +137,7 @@ def generate_trade_list(target_weights, holdings_list, live_prices, fresh_capita
             if current_qty > 0:
                 trades.append({
                     "Stock": raw_ticker + " (Unresolved)",
+                    "ISIN": raw_isin,
                     "Action": "Not Available",
                     "Shares": int(current_qty),
                     "Current Price": 0.0,
@@ -159,6 +165,7 @@ def generate_trade_list(target_weights, holdings_list, live_prices, fresh_capita
                     
                 trades.append({
                     "Stock": ticker,
+                    "ISIN": raw_isin,
                     "Action": "SELL",
                     "Shares": int(current_qty),
                     "Current Price": round(price, 2),

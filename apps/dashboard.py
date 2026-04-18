@@ -69,7 +69,7 @@ try:
         
     # Sidebar
     st.sidebar.header("Retail Execution (Optional)")
-    portfolio_file = st.sidebar.file_uploader("Upload Current Holdings (CSV)", type=["csv"], help="Expected columns: Ticker, Qty_LongTerm, Qty_ShortTerm")
+    portfolio_file = st.sidebar.file_uploader("Upload Current Holdings (CSV)", type=["csv"], help="Expected columns: stock_symbol, isin_name, qty_longterm, qty_shortterm")
     fresh_capital = st.sidebar.number_input("Fresh Capital to Deploy", min_value=0.0, value=0.0, step=1000.0)
     
     holdings_list = []
@@ -79,7 +79,7 @@ try:
             holdings_list = df_holdings.to_dict('records')
             st.sidebar.success(f"Loaded {len(holdings_list)} legacy positions.")
         except Exception as e:
-            st.sidebar.error("File parse error. Check strictly for columns: Ticker, Qty_LongTerm, Qty_ShortTerm")
+            st.sidebar.error("File parse error. Check strictly for columns: stock_symbol, isin_name, qty_longterm, qty_shortterm")
 
     st.sidebar.markdown("---")
     st.sidebar.header("Strategy Tuning")
