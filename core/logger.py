@@ -12,13 +12,13 @@ def setup_logger():
     
     # Construct master engine logger
     logger = logging.getLogger("QuantEngine")
-    logger.setLevel(logging.INFO)
+    logger.setLevel(logging.DEBUG)
     
     # Prevent duplicate handlers inside reactive architectures like Streamlit
     if not logger.handlers:
         # Create rotating file handler (5MB max size, preserve 3 archival cascades)
         file_handler = RotatingFileHandler(log_file, maxBytes=5*1024*1024, backupCount=3)
-        file_handler.setLevel(logging.INFO)
+        file_handler.setLevel(logging.DEBUG)
         
         # Premium format styling
         formatter = logging.Formatter('%(asctime)s | %(levelname)-8s | [%(name)s] %(message)s')

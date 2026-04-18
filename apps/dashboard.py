@@ -12,7 +12,6 @@ from core.momentum import select_top_momentum, apply_sector_caps
 from core.optimizer import optimize_weights, apply_macro_overlay, apply_turnover_control, apply_sector_weight_constraints, apply_cap_size_constraints
 from core.macro import load_macro_data, compute_macro_regime
 from core.universe import fetch_broad_universe, apply_fundamental_filters
-from core.execution import generate_trade_list
 from core.state import load_portfolio_state, save_portfolio_state
 from core.logger import logger
 
@@ -56,11 +55,12 @@ try:
         return apply_fundamental_filters(broad_universe)
 
     with st.spinner("🤖 Evaluating Fundamental Screener (Daily Cache)..."):
-        tickers, sector_map, cap_map, scoring_df = get_investable_universe()
+        investable_tickers, sector_map, cap_map, scoring_df = get_investable_universe()
+        all_assessed_tickers = scoring_df["Stock"].tolist() if not scoring_df.empty else investable_tickers
 
     # Fetch
-    with st.spinner("Fetching market data (Cached)..."):
-        prices = get_cached_prices(tickers)
+    with st.spinner(f"Fetching market data for {len(all_assessed_tickers)} stocks (Cached)..."):
+        prices = get_cached_prices(all_assessed_tickers)
         
     nifty_prices = None
     if "^NSEI" in prices.columns:
@@ -76,6 +76,7 @@ try:
     if portfolio_file is not None:
         try:
             import io
+            logger.info(f"Parsing portfolio file: {portfolio_file.name}")
             raw_content = portfolio_file.getvalue().decode("utf-8")
             
             # Read explicitly. If it fails due to tabs, fallback to reading with \t
@@ -90,6 +91,7 @@ try:
             # Pandas can inject np.nan for empty rows, force them to empty string '' so Python doesn't evaluate them as None
             df_holdings = df_holdings.fillna('')
             holdings_list = df_holdings.to_dict('records')
+            logger.info(f"Successfully parsed {len(holdings_list)} records from CSV.")
             st.sidebar.success(f"Loaded {len(holdings_list)} legacy positions.")
         except Exception as e:
             st.sidebar.error("File parse error. Check strictly for columns: stock_symbol, isin_name, qty_longterm, qty_shortterm")
@@ -113,8 +115,11 @@ try:
     else:
         st.sidebar.success("✅ Portfolio Caps optimally scaled to 100%.")
 
-    # Compute factors dynamically
-    scores = compute_factor_scores(prices, {
+    # Compute factors dynamically ONLY for the fundamentally approved survivors (Top 30%)
+    # This ensures we don't accidentally buy a low-quality stock just because it has high momentum.
+    buy_list_prices = prices[[t for t in investable_tickers if t in prices.columns]]
+    
+    scores = compute_factor_scores(buy_list_prices, {
         "momentum_lookback_days": mom_lookback,
         "volatility_lookback_days": vol_lookback
     })
@@ -157,7 +162,7 @@ try:
         }
     }
     
-    raw_weights = optimize_weights(prices, selected, regime, sector_map, cap_map, limits)
+    raw_weights = optimize_weights(buy_list_prices, selected, regime, sector_map, cap_map, limits)
     
     # Run the safety nets to force overflow into CASH (Critical for HRP which lacks native bounds)
     raw_weights = apply_sector_weight_constraints(raw_weights, sector_map, regime)
@@ -222,7 +227,7 @@ try:
             st.markdown(f"""
             **The quantitative engine acts as a ruthless filter, removing weak assets at every mathematical layer:**
             - 🏢 **Starting Universe**: `{len(scoring_df)}` stocks analyzed for structural financial health.
-            - 🥇 **Fundamental Screen**: `{len(tickers)}` stocks survived by ranking in the top tier for ROCE, Profit Growth, and low Debt.
+            - 🥇 **Fundamental Screen**: `{len(investable_tickers)}` stocks survived by ranking in the top tier for ROCE, Profit Growth, and low Debt.
             - 📈 **Momentum Cutoff**: `{len(selected_raw)}` stocks retained for exhibiting confirming multi-timeframe price momentum.
             - 🛡️ **Sector Caps**: Trimmed down to `{len(selected)}` finalists to prevent extreme cluster correlation.
             - ⚖️ **Optimization ({regime['optimization_mode']})**: Finalized `{final_stock_count}` precise asset allocations. `{cash_w:.1f}%` of the portfolio was systematically routed to `CASH` to prevent breaching maximum mathematical limits.
@@ -360,7 +365,14 @@ try:
             st.info("💡 **Activate Retail Execution**: Upload your existing portfolio CSV or input Fresh Capital in the sidebar to generate a deterministic integer-share shopping list.")
         else:
             with st.spinner("Calculating trade deltas..."):
-                df_trades = generate_trade_list(weights, holdings_list, prices, fresh_capital)
+                from core.execution import generate_trade_list
+                df_trades = generate_trade_list(
+                    weights, 
+                    holdings_list, 
+                    prices, 
+                    fresh_capital,
+                    assessed_tickers=all_assessed_tickers
+                )
                 
             if df_trades.empty:
                 st.warning("No actionable trades generated based on current capital and targets.")

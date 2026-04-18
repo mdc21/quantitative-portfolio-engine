@@ -2,8 +2,7 @@ import pandas as pd
 import os
 import logging
 from core.universe import FALLBACK_LARGE, FALLBACK_MID, FALLBACK_SMALL
-
-logger = logging.getLogger(__name__)
+from core.logger import logger
 
 UNIVERSES = FALLBACK_LARGE + FALLBACK_MID + FALLBACK_SMALL
 

@@ -47,7 +47,7 @@ def test_dashboard_render(mocker, mock_fundamental_data, mock_prices):
     
     # 6. Verify Tabs
     tabs = at.get("tab")
-    assert len(tabs) == 4
+    assert len(tabs) == 5
     assert tabs[0].label == "🚀 Portfolio Allocation"
 
 def test_dashboard_slider_interaction(mocker, mock_fundamental_data, mock_prices):
