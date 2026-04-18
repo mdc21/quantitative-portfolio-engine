@@ -125,11 +125,19 @@ def generate_trade_list(target_weights, holdings_list, live_prices, fresh_capita
             stcg_warning = ""
             if action == "SELL" and current_data['Qty_ShortTerm'] > 0:
                 stcg_warning = "⚠️ STCG RISK (Hold < 1Yr)"
-                
+            
+            action_label = "🟢 BUY" if action == "BUY" else "🔴 SELL"
+            if action == "BUY":
+                group_label = "Buy Orders"
+            else:
+                # Use a small epsilon (0.01%) to determine if this is a strategic exit or a partial trim
+                group_label = "Strategic Exits" if target_weight < 0.0001 else "Rebalance Trims"
+            
             trades.append({
                 "Stock": ticker,
                 "ISIN": current_data.get('Original_ISIN', ''),
-                "Action": action,
+                "Action": action_label,
+                "Group": group_label,
                 "Shares": abs(int(delta_qty)),
                 "Current Price": round(price, 2),
                 "Est. Value": round(abs(delta_qty) * price, 2),
@@ -166,7 +174,8 @@ def generate_trade_list(target_weights, holdings_list, live_prices, fresh_capita
                 trades.append({
                     "Stock": label,
                     "ISIN": raw_isin,
-                    "Action": "Not Available",
+                    "Action": "⚪ N/A",
+                    "Group": "Unresolved Assets",
                     "Shares": int(current_qty),
                     "Current Price": 0.0,
                     "Est. Value": 0.0,
@@ -207,7 +216,8 @@ def generate_trade_list(target_weights, holdings_list, live_prices, fresh_capita
                 trades.append({
                     "Stock": display_name,
                     "ISIN": raw_isin,
-                    "Action": "SELL",
+                    "Action": "🔴 SELL",
+                    "Group": "Strategic Exits",
                     "Shares": int(current_qty),
                     "Current Price": round(price, 2),
                     "Est. Value": round(current_qty * price, 2),

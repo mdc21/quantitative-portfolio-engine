@@ -12,10 +12,19 @@ from core.momentum import select_top_momentum, apply_sector_caps
 from core.optimizer import optimize_weights, apply_macro_overlay, apply_turnover_control, apply_sector_weight_constraints, apply_cap_size_constraints
 from core.macro import load_macro_data, compute_macro_regime
 from core.universe import fetch_broad_universe, apply_fundamental_filters
+from core.ticker_mapper import resolve_ticker
 from core.state import load_portfolio_state, save_portfolio_state
 from core.logger import logger
 
 st.set_page_config(page_title="Quant Dashboard", layout="wide", page_icon="📈")
+
+# --- SESSION STATE INITIALIZATION ---
+if 'holdings_list' not in st.session_state:
+    st.session_state['holdings_list'] = []
+if 'fresh_capital' not in st.session_state:
+    st.session_state['fresh_capital'] = 0.0
+if 'is_allocated' not in st.session_state:
+    st.session_state['is_allocated'] = False
 
 # --- UI WHITESPACE REDUCTION ---
 st.markdown("""
@@ -58,45 +67,29 @@ try:
         investable_tickers, sector_map, cap_map, scoring_df = get_investable_universe()
         all_assessed_tickers = scoring_df["Stock"].tolist() if not scoring_df.empty else investable_tickers
 
-    # Fetch
-    with st.spinner(f"Fetching market data for {len(all_assessed_tickers)} stocks (Cached)..."):
-        prices = get_cached_prices(all_assessed_tickers)
+    # Fetch - Expand fetch to include user's owner tickers for comparison chart
+    owner_tickers = []
+    if st.session_state['holdings_list']:
+        logger.info(f"Resolving {len(st.session_state['holdings_list'])} owner tickers for comparison...")
+        for hl in st.session_state['holdings_list']:
+            c_hl = {str(k).strip().lower(): v for k, v in hl.items()}
+            r_t = str(c_hl.get('stock_symbol', c_hl.get('ticker', ''))).strip().upper()
+            r_i = str(c_hl.get('isin_name', c_hl.get('isin_code', ''))).strip().upper()
+            if r_t:
+                res_t, _ = resolve_ticker(r_t, isin=r_i)
+                owner_tickers.append(res_t)
+    
+    unique_fetch_list = list(set(all_assessed_tickers + owner_tickers))
+    
+    with st.spinner(f"Fetching market data for {len(unique_fetch_list)} stocks (Strategy + Owner Portfolio)..."):
+        prices = get_cached_prices(unique_fetch_list)
         
     nifty_prices = None
     if "^NSEI" in prices.columns:
         nifty_prices = prices["^NSEI"]
         prices = prices.drop(columns=["^NSEI"])
         
-    # Sidebar
-    st.sidebar.header("Retail Execution (Optional)")
-    portfolio_file = st.sidebar.file_uploader("Upload Current Holdings (CSV)", type=["csv"], help="Expected columns: stock_symbol, isin_name, qty_longterm, qty_shortterm")
-    fresh_capital = st.sidebar.number_input("Fresh Capital to Deploy", min_value=0.0, value=0.0, step=1000.0)
-    
-    holdings_list = []
-    if portfolio_file is not None:
-        try:
-            import io
-            logger.info(f"Parsing portfolio file: {portfolio_file.name}")
-            raw_content = portfolio_file.getvalue().decode("utf-8")
-            
-            # Read explicitly. If it fails due to tabs, fallback to reading with \t
-            try:
-                df_holdings = pd.read_csv(io.StringIO(raw_content))
-            except Exception:
-                df_holdings = pd.read_csv(io.StringIO(raw_content), sep='\t')
-                
-            if len(df_holdings.columns) == 1:
-                df_holdings = pd.read_csv(io.StringIO(raw_content), sep='\t')
-                
-            # Pandas can inject np.nan for empty rows, force them to empty string '' so Python doesn't evaluate them as None
-            df_holdings = df_holdings.fillna('')
-            holdings_list = df_holdings.to_dict('records')
-            logger.info(f"Successfully parsed {len(holdings_list)} records from CSV.")
-            st.sidebar.success(f"Loaded {len(holdings_list)} legacy positions.")
-        except Exception as e:
-            st.sidebar.error("File parse error. Check strictly for columns: stock_symbol, isin_name, qty_longterm, qty_shortterm")
-
-    st.sidebar.markdown("---")
+    # Sidebar - Strategy Only
     st.sidebar.header("Strategy Tuning")
     mom_lookback = st.sidebar.slider("Momentum Lookback (Days)", 30, 252, 90, help="Number of trading days to track for historical price momentum. Usually 90-180 days.")
     vol_lookback = st.sidebar.slider("Volatility Lookback (Days)", 30, 252, 60, help="Amount of history used to compute standard deviation. Lower values react faster to market crashes.")
@@ -218,25 +211,73 @@ try:
 
 
     # Tabs Layout
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["🚀 Portfolio Allocation", "📈 Price Action", "🔥 Factor Heatmap", "📊 Scoreboard", "🛒 Shopping List"])
+    tab0, tab1, tab2, tab3, tab4, tab5 = st.tabs(["📥 Data Ingestion", "🚀 Portfolio Allocation", "📈 Price Action", "🔥 Factor Heatmap", "📊 Scoreboard", "🛒 Shopping List"])
+
+    with tab0:
+        st.subheader("📥 Step 1: Portfolio Data Ingestion")
+        st.markdown("""
+        Upload your current portfolio holdings to calculate trade deltas, or simply enter a **Fresh Capital** amount to generate a brand new portfolio allocation.
+        """)
+        
+        col_ing_1, col_ing_2 = st.columns(2)
+        with col_ing_1:
+            portfolio_file = st.file_uploader("Upload Current Holdings (CSV)", type=["csv"], help="Expected columns: stock_symbol, isin_name, qty_longterm, qty_shortterm")
+            if portfolio_file is not None:
+                try:
+                    import io
+                    raw_content = portfolio_file.getvalue().decode("utf-8")
+                    try:
+                        df_holdings = pd.read_csv(io.StringIO(raw_content))
+                    except Exception:
+                        df_holdings = pd.read_csv(io.StringIO(raw_content), sep='\t')
+                    if len(df_holdings.columns) == 1:
+                         df_holdings = pd.read_csv(io.StringIO(raw_content), sep='\t')
+                    
+                    df_holdings = df_holdings.fillna('')
+                    st.session_state['holdings_list'] = df_holdings.to_dict('records')
+                    st.success(f"✅ Successfully identified {len(st.session_state['holdings_list'])} records from {portfolio_file.name}")
+                    st.dataframe(df_holdings.head(5), hide_index=True)
+                except Exception as e:
+                    st.error(f"File parse error: {e}")
+            else:
+                st.session_state['holdings_list'] = []
+
+        with col_ing_2:
+            st.session_state['fresh_capital'] = st.number_input("Fresh Capital to Deploy (₹)", min_value=0.0, value=st.session_state.get('fresh_capital', 0.0), step=1000.0)
+            st.info("💡 **Tip:** If you have zero existing holdings, the engine will allocate the entire Fresh Capital amount into the model's top performers.")
+
+        st.markdown("---")
+        if st.button("🚀 Review Portfolio & Allocate Investment", use_container_width=True):
+            st.session_state['is_allocated'] = True
+            st.balloons()
+            st.success("Strategy computed! Switch to the other tabs to view your optimized results.")
+
+    holdings_list = st.session_state['holdings_list']
+    fresh_capital = st.session_state['fresh_capital']
 
     with tab1:
-        with st.expander("💡 Explainability: How was this portfolio selected?"):
-            final_stock_count = len([s for s, w in weights.items() if w > 0.001 and s != "CASH"])
-            cash_w = weights.get("CASH", 0.0) * 100
-            st.markdown(f"""
-            **The quantitative engine acts as a ruthless filter, removing weak assets at every mathematical layer:**
-            - 🏢 **Starting Universe**: `{len(scoring_df)}` stocks analyzed for structural financial health.
-            - 🥇 **Fundamental Screen**: `{len(investable_tickers)}` stocks survived by ranking in the top tier for ROCE, Profit Growth, and low Debt.
-            - 📈 **Momentum Cutoff**: `{len(selected_raw)}` stocks retained for exhibiting confirming multi-timeframe price momentum.
-            - 🛡️ **Sector Caps**: Trimmed down to `{len(selected)}` finalists to prevent extreme cluster correlation.
-            - ⚖️ **Optimization ({regime['optimization_mode']})**: Finalized `{final_stock_count}` precise asset allocations. `{cash_w:.1f}%` of the portfolio was systematically routed to `CASH` to prevent breaching maximum mathematical limits.
-            """)
+        if not st.session_state['is_allocated']:
+            st.warning("⚠️ **Analysis Pending**: Please go to the **📥 Data Ingestion** tab to review your holdings and click 'Review & Allocate' first.")
+        else:
+            with st.expander("💡 Explainability: How was this portfolio selected?"):
+                final_stock_count = len([s for s, w in weights.items() if w > 0.001 and s != "CASH"])
+                cash_w = weights.get("CASH", 0.0) * 100
+                st.markdown(f"""
+                **The quantitative engine acts as a ruthless filter, removing weak assets at every mathematical layer:**
+                - 🏢 **Starting Universe**: `{len(scoring_df)}` stocks analyzed for structural financial health.
+                - 🥇 **Fundamental Screen**: `{len(investable_tickers)}` stocks survived by ranking in the top tier for ROCE, Profit Growth, and low Debt.
+                - 📈 **Momentum Cutoff**: `{len(selected_raw)}` stocks retained for exhibiting confirming multi-timeframe price momentum.
+                - 🛡️ **Sector Caps**: Trimmed down to `{len(selected)}` finalists to prevent extreme cluster correlation.
+                - ⚖️ **Optimization ({regime['optimization_mode']})**: Finalized `{final_stock_count}` precise asset allocations. `{cash_w:.1f}%` of the portfolio was systematically routed to `CASH` to prevent breaching maximum mathematical limits.
+                """)
 
-        col1, col2 = st.columns([1, 2])
-        
-        with col1:
-            st.subheader("Target Allocations")
+        if not st.session_state['is_allocated']:
+            st.info("📥 Waiting for Data Ingestion...")
+        else:
+            col1, col2 = st.columns([1, 2])
+            
+            with col1:
+                st.subheader("Target Allocations")
             df_weights = pd.DataFrame(weights.items(), columns=["Stock", "Weight(%)"])
             df_weights["Weight(%)"] = (df_weights["Weight(%)"] * 100).round(2)
             df_weights["Sector"] = df_weights["Stock"].apply(lambda x: "Cash / Safety Buffer" if x == "CASH" else sector_map.get(x, "Other"))
@@ -247,37 +288,67 @@ try:
             # Enforce a tight height bound to trigger the native Streamlit vertical scrollbar
             st.dataframe(df_weights[["Stock", "Sector", "Weight(%)"]], hide_index=True, height=400)
             
-        with col2:
-            st.subheader("Exposure Analysis")
-            view_mode = st.radio("Breakdown By:", ["Sector", "Asset"], horizontal=True, label_visibility="collapsed")
-            
-            if view_mode == "Asset":
-                fig = px.pie(df_weights, values="Weight(%)", names="Stock", hole=0.4, 
-                             color_discrete_sequence=px.colors.qualitative.Pastel)
-            else:
-                df_sectors = df_weights.groupby("Sector", as_index=False)["Weight(%)"].sum()
-                fig = px.pie(df_sectors, values="Weight(%)", names="Sector", hole=0.4, 
-                             color_discrete_sequence=px.colors.qualitative.Vivid)
-                             
-            fig.update_traces(textposition='inside', textinfo='percent+label')
-            fig.update_layout(margin=dict(t=10, b=20, l=10, r=10), height=380)
-            st.plotly_chart(fig, use_container_width=True)
+            with col2:
+                st.subheader("Exposure Analysis")
+                view_mode = st.radio("Breakdown By:", ["Sector", "Asset"], horizontal=True, label_visibility="collapsed")
+                
+                if view_mode == "Asset":
+                    fig = px.pie(df_weights, values="Weight(%)", names="Stock", hole=0.4, 
+                                 color_discrete_sequence=px.colors.qualitative.Pastel)
+                else:
+                    df_sectors = df_weights.groupby("Sector", as_index=False)["Weight(%)"].sum()
+                    fig = px.pie(df_sectors, values="Weight(%)", names="Sector", hole=0.4, 
+                                 color_discrete_sequence=px.colors.qualitative.Vivid)
+                                 
+                fig.update_traces(textposition='inside', textinfo='percent+label')
+                fig.update_layout(margin=dict(t=10, b=20, l=10, r=10), height=380)
+                st.plotly_chart(fig, use_container_width=True)
 
     with tab2:
-        st.subheader("Historical Alpha Generation (6-Month)")
-        
-        if nifty_prices is not None:
+        if not st.session_state['is_allocated']:
+            st.info("📈 Waiting for Strategy Allocation...")
+        elif nifty_prices is not None:
+            st.subheader("Historical Alpha Generation (6-Month)")
             nifty_curve = (nifty_prices / nifty_prices.iloc[0]) * 100
             
-            # Synthesize the exact portfolio curve from live weights
+            # Synthesize Base BenchMARKS and the OWNER PORTFOLIO
+            all_returns = prices.pct_change().dropna()
+            
+            # --- QUANT STRATEGY CURVE ---
             daily_returns = prices[selected].pct_change().dropna()
             w_array = np.array([weights.get(s, 0.0) for s in daily_returns.columns])
-            
             port_returns = daily_returns.dot(w_array)
             port_curve = 100 * (1 + port_returns).cumprod()
-            
-            # Align origin
             port_curve = pd.concat([pd.Series({prices.index[0]: 100.0}), port_curve])
+            
+            # --- OWNER PORTFOLIO CURVE CALCULATION ---
+            owner_curve = None
+            if st.session_state['holdings_list']:
+                # Resolve weights based on current market value
+                owner_raw_values = {}
+                latest_p = prices.iloc[-1]
+                for hl in st.session_state['holdings_list']:
+                    cl = {str(k).strip().lower(): v for k, v in hl.items()}
+                    rt = str(cl.get('stock_symbol', cl.get('ticker', ''))).strip().upper()
+                    ri = str(cl.get('isin_name', cl.get('isin_code', ''))).strip().upper()
+                    if rt:
+                        rest, _ = resolve_ticker(rt, isin=ri)
+                        if rest in prices.columns:
+                            qty = float(cl.get('qty_longterm', 0) or 0) + float(cl.get('qty_shortterm', 0) or 0)
+                            price = latest_p[rest]
+                            owner_raw_values[rest] = owner_raw_values.get(rest, 0.0) + (qty * price)
+                
+                total_o_val = sum(owner_raw_values.values())
+                if total_o_val > 0:
+                    o_weights = {t: v / total_o_val for t, v in owner_raw_values.items()}
+                    # Filter returns to only those tickers we own
+                    o_tickers = list(o_weights.keys())
+                    o_returns_df = all_returns[o_tickers]
+                    o_w_array = np.array([o_weights[t] for t in o_tickers])
+                    
+                    o_port_returns = o_returns_df.dot(o_w_array)
+                    owner_curve = 100 * (1 + o_port_returns).cumprod()
+                    owner_curve = pd.concat([pd.Series({prices.index[0]: 100.0}), owner_curve])
             
             df_curve = pd.DataFrame({
                 "Quant Strategy": port_curve,
@@ -288,9 +359,11 @@ try:
                 "Quant Strategy": "#00FF00", 
                 "Nifty 50 Benchmark": "#FF4444"
             }
+
+            if owner_curve is not None:
+                df_curve["Owner Portfolio"] = owner_curve
+                color_map["Owner Portfolio"] = "#FFD700" # GOLD
             
-            # Synthesize Base Benchmarks for Mid and Small Caps (Equal Weighted Component Drift)
-            all_returns = prices.pct_change().dropna()
             mid_cols = [c for c in all_returns.columns if cap_map.get(c) == "Mid"]
             small_cols = [c for c in all_returns.columns if cap_map.get(c) == "Small"]
             
@@ -306,7 +379,7 @@ try:
                 df_curve["Synthetic Smallcap (250)"] = small_curve
                 color_map["Synthetic Smallcap (250)"] = "#4169E1" # Royal Blue
             
-            fig2 = px.line(df_curve, title="Strategy Edge vs Multi-Cap Benchmarks (Base 100)",
+            fig2 = px.line(df_curve, title="Strategy Edge vs Benchmark & Your Portfolio (Base 100)",
                            color_discrete_map=color_map)
             fig2.update_traces(line=dict(width=3))
             st.plotly_chart(fig2, width='stretch')
@@ -315,8 +388,11 @@ try:
             st.error("Nifty 50 anchor missing from data extraction.")
 
     with tab3:
-        st.subheader("Momentum vs Risk Ranking")
-        st.markdown("Visualizing the final composite momentum factor structure.")
+        if not st.session_state['is_allocated']:
+            st.info("🔥 Waiting for Strategy Allocation...")
+        else:
+            st.subheader("Momentum vs Risk Ranking")
+            st.markdown("Visualizing the final composite momentum factor structure.")
         
         df_scores = scores.reset_index()
         df_scores.columns = ["Stock", "Composite Score"]
@@ -329,8 +405,11 @@ try:
         st.plotly_chart(fig3, width='stretch')
 
     with tab4:
-        st.subheader("Fundamental Scoreboard (Top 30% Advancing)")
-        st.markdown("Displaying the continuous scoring matrix. High performers are ranked via multi-factor blending.")
+        if not st.session_state['is_allocated']:
+            st.info("📊 Waiting for Strategy Allocation...")
+        else:
+            st.subheader("Fundamental Scoreboard (Top 30% Advancing)")
+            st.markdown("Displaying the continuous scoring matrix. High performers are ranked via multi-factor blending.")
         
         if not scoring_df.empty:
             # Format for display
@@ -361,10 +440,13 @@ try:
     with tab5:
         from core.ticker_mapper import ISIN_MAP
         st.subheader(f"🛒 Execution Engine: Tax-Aware Shopping List (ISIN DB: {len(ISIN_MAP)} entries)")
-        if not holdings_list and fresh_capital <= 0:
-            st.info("💡 **Activate Retail Execution**: Upload your existing portfolio CSV or input Fresh Capital in the sidebar to generate a deterministic integer-share shopping list.")
+        if not st.session_state['is_allocated']:
+            st.info("💡 **Analyze Results**: Upload data in the Ingestion tab and click 'Review & Allocate' to see your shopping list.")
         else:
             with st.spinner("Calculating trade deltas..."):
+                import importlib
+                import core.execution
+                importlib.reload(core.execution)
                 from core.execution import generate_trade_list
                 df_trades = generate_trade_list(
                     weights, 
@@ -380,12 +462,56 @@ try:
                 def highlight_tax(s):
                     return ['color: white; background-color: #ff4b4b; font-weight: bold' if "⚠️" in str(v) else '' for v in s]
                     
-                st.markdown("This list calculates exactly how many shares you need to buy or sell to reach the mathematical target, accounting for the cash you've added today.")
-                st.dataframe(
-                    df_trades.style.apply(highlight_tax, subset=['Tax Indicator']), 
-                    use_container_width=True,
-                    hide_index=True
-                )
+                st.markdown("Trades are intelligently grouped by their strategic purpose below. Click a section to expand details.")
+                
+                # Definitive sorting of categories
+                category_priority = ["Buy Orders", "Rebalance Trims", "Strategic Exits", "Unresolved Assets"]
+                
+                for group_name in category_priority:
+                    group_df = df_trades[df_trades["Group"] == group_name]
+                    if group_df.empty:
+                        continue
+                    
+                    # Summary metrics for header
+                    total_value = group_df["Est. Value"].sum()
+                    asset_count = len(group_df)
+                    
+                    expander_label = f"**{group_name}** ({asset_count} Assets | ₹{total_value:,.2f})"
+                    
+                    with st.expander(expander_label, expanded=(group_name == "Buy Orders")):
+                        # Configure columns specifically for this group view
+                        st.dataframe(
+                            group_df.style.apply(highlight_tax, subset=['Tax Indicator']),
+                            use_container_width=True,
+                            hide_index=True,
+                            column_config={
+                                "Group": None, # Hide the grouping column as it is redundant
+                                "Action": st.column_config.TextColumn(
+                                    "Action",
+                                    help="Trade direction",
+                                ),
+                                "Shares": st.column_config.NumberColumn(
+                                    "Shares (Qty)",
+                                    help="Quantity to trade",
+                                    format="%d"
+                                ),
+                                "Current Price": st.column_config.NumberColumn(
+                                    "Market Price (₹)",
+                                    format="₹ %.2f"
+                                ),
+                                "Est. Value": st.column_config.NumberColumn(
+                                    "Trade Value (₹)",
+                                    format="₹ %.2f"
+                                ),
+                                "Stock": st.column_config.TextColumn(
+                                    "Asset / Security",
+                                    width="large"
+                                ),
+                                "Target Weight": st.column_config.TextColumn(
+                                    "Target %"
+                                )
+                            }
+                        )
 
     logger.info("Streamlit Application rendered successfully.")
 
