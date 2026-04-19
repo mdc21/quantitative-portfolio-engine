@@ -321,7 +321,9 @@ try:
                 except Exception as e:
                     st.error(f"File parse error: {e}")
             else:
-                st.session_state['holdings_list'] = []
+                # Don't wipe holdings on re-run — file_uploader returns None after first read
+                if 'holdings_list' not in st.session_state:
+                    st.session_state['holdings_list'] = []
 
         with col_ing_2:
             st.session_state['fresh_capital'] = st.number_input("Fresh Capital to Deploy (₹)", min_value=0.0, value=st.session_state.get('fresh_capital', 0.0), step=1000.0)
