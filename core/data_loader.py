@@ -31,7 +31,9 @@ def _generate_synthetic_prices(fetch_list):
         base = np.random.uniform(200, 5000)
         returns = np.random.normal(0.0005, 0.015, len(dates))
         synth_prices[t] = base * (1 + returns).cumprod()
-    return pd.DataFrame(synth_prices, index=dates)
+    data = pd.DataFrame(synth_prices, index=dates)
+    data.attrs["data_source"] = "Synthetic Simulation"
+    return data
 
 def fetch_prices(tickers, period="6mo"):
     from core.logger import logger
@@ -55,6 +57,7 @@ def fetch_prices(tickers, period="6mo"):
     # 🛡️ Robust Fallback: Generate Synthetic Simulation Data if download returned empty
     if data.empty:
         return _generate_synthetic_prices(fetch_list)
-        
+    
+    data.attrs["data_source"] = "Yahoo Finance (Live)"
     return data
 

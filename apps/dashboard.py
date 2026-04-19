@@ -89,6 +89,35 @@ try:
     if "^NSEI" in prices.columns:
         nifty_prices = prices["^NSEI"]
         prices = prices.drop(columns=["^NSEI"])
+
+    # --- DATA QUALITY WARNINGS ---
+    # Warn users when analysis is based on non-live data
+    if not scoring_df.empty and "DataSource" in scoring_df.columns:
+        live_count = (scoring_df["DataSource"] == "Live").sum()
+        curated_count = (scoring_df["DataSource"] == "Curated Profile").sum()
+        synthetic_count = (scoring_df["DataSource"] == "Synthetic Random").sum()
+        total = len(scoring_df)
+        
+        if live_count == total:
+            st.sidebar.success(f"📡 **Fundamental Data:** Live ({total} stocks via Yahoo Finance)")
+        elif curated_count > 0 or synthetic_count > 0:
+            st.sidebar.warning(
+                f"⚠️ **Fundamental Data: Simulation Mode**\n\n"
+                f"Yahoo Finance is unreachable. Fundamentals are estimated:\n"
+                f"- **{curated_count}** stocks using curated blue-chip profiles\n"
+                f"- **{synthetic_count}** stocks using synthetic random data\n\n"
+                f"*Recommendations may differ from live market conditions.*"
+            )
+    
+    price_source = prices.attrs.get("data_source", "Unknown")
+    if price_source == "Synthetic Simulation":
+        st.sidebar.warning(
+            "⚠️ **Price Data: Simulation Mode**\n\n"
+            "Market prices are synthetically generated (random walk). "
+            "Momentum rankings and return charts are illustrative only."
+        )
+    elif price_source == "Yahoo Finance (Live)":
+        st.sidebar.success("📡 **Price Data:** Live (Yahoo Finance)")
         
     st.sidebar.header("Multi-Cap Bounds")
     cap_large = st.sidebar.slider("Max Large Cap Limit (%)", 0.0, 1.0, 0.70, help="Maximum portfolio % constrained to Nifty 50 constituents.")

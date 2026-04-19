@@ -59,6 +59,7 @@ def _evaluate_fundamentals(item):
     item is a tuple of (ticker, size)
     """
     ticker, size = item
+    data_source = "Live"  # Track where this stock's data came from
     try:
         info = yf.Ticker(ticker, session=session).info
         if not info:
@@ -121,6 +122,7 @@ def _evaluate_fundamentals(item):
         
         profile = CURATED_PROFILES.get(ticker)
         if profile:
+            data_source = "Curated Profile"
             roe = profile["roe"]
             profit_growth = profile["pg"]
             sales_growth = profile["sg"]
@@ -133,6 +135,7 @@ def _evaluate_fundamentals(item):
             ocf_ni_ratio = profile["ocf"]
             sector = profile["sector"]
         else:
+            data_source = "Synthetic Random"
             # Size-aware random generation for non-curated tickers
             import random
             random.seed(ticker)
@@ -157,6 +160,7 @@ def _evaluate_fundamentals(item):
         "Stock": ticker, 
         "Sector": sector,
         "Size": size,
+        "DataSource": data_source,
         "ROCE": roe, 
         "ProfitGrowth": profit_growth,
         "SalesGrowth": sales_growth,
