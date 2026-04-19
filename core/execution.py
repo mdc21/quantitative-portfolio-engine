@@ -166,6 +166,12 @@ def generate_trade_list(target_weights, holdings_list, live_prices, fresh_capita
                 group_label = "Strategic Exits" if target_weight < 0.0001 else "Rebalance Trims"
                 exec_label = f"Tactical {mode}" if mode == "Staggered" else "Bulk Order"
             
+            # Context-Aware Note Adaptation
+            if action == "SELL" and mode == "Staggered":
+                note = f"{note} Exit 50% now, trail 50% on SL or T1."
+            elif action == "BUY" and grade.startswith("A"):
+                note = f"{note} Suitable for momentum entry."
+
             trades.append({
                 "Stock": ticker,
                 "ISIN": current_data.get('Original_ISIN', ''),
@@ -233,6 +239,10 @@ def generate_trade_list(target_weights, holdings_list, live_prices, fresh_capita
         mode = audit.get("Execution", "Bulk")
         note = audit.get("Note", "")
         
+        # Context-Aware Note Adaptation for Strategic Exits
+        if mode == "Staggered":
+            note = f"{note} Exit 50% now, trail 50% on SL or T1."
+
         trades.append({
             "Stock": ticker,
             "ISIN": data.get('Original_ISIN', ''),

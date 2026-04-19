@@ -73,17 +73,22 @@ def compute_tactical_audit(prices):
     else:
         grade = "B (Neutral)"
         
-    # 4. Staggered Execution Logic (Exit Focus)
-    # If we need to sell, should we stagger or bulk?
-    if current_rsi > 80 or current_price < sma50:
-        execution = "Bulk"
-        note = "Structural breakdown or parabolic top. Exit immediately."
-    elif trend in ["Strong Uptrend", "Improving"] and current_rsi < 70:
-        execution = "Staggered"
-        note = "Trend still healthy. Exit 50% now, trail 50% on SL or T1."
+    # 4. Final Insight Note (Technical State Description)
+    if current_rsi > 80:
+        note = "Parabolic exhaustion. High risk of immediate reversal."
+    elif current_price < sma50:
+        if trend == "Strong Downtrend":
+            note = "Structural breakdown. Trading below SMA50/200."
+        else:
+            note = "Technical weakness. Testing SMA50 support levels."
+    elif trend == "Strong Uptrend":
+        note = "Strong Trend. Price comfortably above institutional support."
+    elif trend == "Improving":
+        note = "Momentum building. Technical structure is improving."
     else:
-        execution = "Bulk"
-        note = "Standard rebalance exit."
+        note = "Consolidation phase. Neutral technical setup."
+        
+    execution = "Staggered" if (trend in ["Strong Uptrend", "Improving"] and current_rsi < 70) else "Bulk"
         
     return {
         "RSI": round(current_rsi, 1),

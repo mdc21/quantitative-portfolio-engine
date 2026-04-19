@@ -650,7 +650,7 @@ try:
             
             # --- INJECT TACTICAL GRADES ---
             if 'tactical_audits' in locals():
-                display_df["Grade"] = display_df["Stock"].map(lambda x: tactical_audits.get(x, {}).get("Grade", "B"))
+                display_df["Grade"] = display_df["Stock"].map(lambda x: tactical_audits.get(x, {}).get("Grade", "B (Neutral)"))
                 display_df["Trend"] = display_df["Stock"].map(lambda x: tactical_audits.get(x, {}).get("Trend", "Neutral"))
                 # Reorder to put Grade/Trend early
                 cols = ["Stock", "Grade", "Trend", "Score", "Sector", "Size", "Rev PEG", "ForwardPE", "PB", "ROCE", "DebtEquity"]
