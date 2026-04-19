@@ -62,6 +62,7 @@ def _evaluate_fundamentals(item):
     try:
         info = yf.Ticker(ticker, session=session).info
         
+        # 1. Core Profitability
         roe = info.get("returnOnEquity")
         if roe is None:
             trailing_eps = info.get("trailingEps")
@@ -75,16 +76,22 @@ def _evaluate_fundamentals(item):
         sales_growth = info.get("revenueGrowth", 0) or 0
         debt_to_equity = info.get("debtToEquity", 100) or 100
         market_cap = info.get("marketCap", 0) or 0
-        pe_ratio = info.get("trailingPE")
-        if pe_ratio is None:
-            pe_ratio = 21.0  # Indian standard fallback
-            
-        pb_ratio = info.get("priceToBook")
-        if pb_ratio is None:
-            pb_ratio = 3.3  # Historical Indian Nifty PB benchmark
-            
+        
+        # 2. Efficiency & Valuation (New)
+        opm = info.get("operatingMargins", 0) or 0
+        peg = info.get("pegRatio", 2.0) or 2.0 # Neutral fallback
+        pe_ratio = info.get("trailingPE", 21.0) or 21.0
+        pb_ratio = info.get("priceToBook", 3.3) or 3.3
+        
+        # 3. Governance & Quality (New)
+        promoter_hold = info.get("heldPercent", 0.5) or 0.5 # Default to 50% if missing
+        ocf = info.get("operatingCashflow", 0) or 0
+        ni = info.get("netIncomeToCommon", 0) or 0
+        ocf_ni_ratio = (ocf / ni) if ni > 0 else (1.0 if ocf > 0 else 0.5)
+
         sector = info.get("sector", "Unknown_Sector")
         
+        # Normalize ROE if it's in percentage format (e.g. 15.0 vs 0.15)
         roe = roe / 100 if roe > 1.0 else roe 
         
         return {
@@ -97,7 +104,11 @@ def _evaluate_fundamentals(item):
             "DebtEquity": debt_to_equity,
             "MarketCap": market_cap,
             "PE": pe_ratio,
-            "PB": pb_ratio
+            "PB": pb_ratio,
+            "OPM": opm,
+            "PEG": peg,
+            "PromoterHold": promoter_hold,
+            "OCF_NI_Ratio": ocf_ni_ratio
         }
     except Exception as e:
         return None
@@ -118,22 +129,34 @@ def apply_fundamental_filters(universe_dict, top_percentile=0.3):
     df = pd.DataFrame(raw_data)
     if df.empty:
         return [], {}, {}, df
-        
-    df["ROCE_rank"] = df["ROCE"].rank(pct=True)
-    df["Sales_rank"] = df["SalesGrowth"].rank(pct=True)
-    df["Profit_rank"] = df["ProfitGrowth"].rank(pct=True)
-    df["Debt_rank"] = df["DebtEquity"].rank(pct=True)
-    
-    # 📌 Perform Segmented Rank for Market Cap (Small caps rank against Small caps!)
-    df["MarketCap_rank"] = df.groupby("Size")["MarketCap"].rank(pct=True)
 
+    # 📌 Threshold-based Normalization (MTA Style)
+    # We map metrics to [0, 1] based on healthy institutional benchmarks
+    df["Q_ROCE"] = df["ROCE"].apply(lambda x: min(max(x, 0) / 0.25, 1.0))
+    df["Q_Profit"] = df["ProfitGrowth"].apply(lambda x: min(max(x, 0) / 0.25, 1.0))
+    df["Q_Sales"] = df["SalesGrowth"].apply(lambda x: min(max(x, 0) / 0.20, 1.0))
+    df["Q_Debt"] = df["DebtEquity"].apply(lambda x: max(0, 1 - (min(x, 200) / 100))) # 0 at 100% (1:1), negative after
+    df["Q_Promoter"] = df["PromoterHold"].apply(lambda x: min(max(x, 0) / 0.50, 1.0))
+    df["Q_Cash"] = df["OCF_NI_Ratio"].apply(lambda x: min(max(x, 0) / 1.0, 1.0))
+    df["Q_Margin"] = df["OPM"].apply(lambda x: min(max(x, 0) / 0.20, 1.0))
+
+    # 📌 Composite Fundamental Score (Weighted sum of institutional benchmarks)
     df["Fundamental_Score"] = (
-        0.3 * df["ROCE_rank"] +
-        0.25 * df["Profit_rank"] +
-        0.2 * df["Sales_rank"] +
-        0.25 * (1 - df["Debt_rank"]) # Penalize high debt relatively
+        0.20 * df["Q_ROCE"] +
+        0.15 * df["Q_Profit"] +
+        0.10 * df["Q_Sales"] +
+        0.15 * df["Q_Debt"] +
+        0.15 * df["Q_Promoter"] +
+        0.15 * df["Q_Cash"] +
+        0.10 * df["Q_Margin"]
     )
 
+    # 📌 Hard Filters / Penalties for Quality Red Flags
+    # PEG > 2.5 (Extreme bubble penalty) or OCF/NI < 0.4 (Cash quality/fraud risk penalty)
+    df.loc[df["PEG"] > 2.5, "Fundamental_Score"] *= 0.5  
+    df.loc[df["OCF_NI_Ratio"] < 0.4, "Fundamental_Score"] *= 0.3 
+
+    # Still sort by score to find the elite few
     df = df.sort_values("Fundamental_Score", ascending=False)
     
     cutoff = max(1, int(len(df) * top_percentile))
@@ -143,6 +166,6 @@ def apply_fundamental_filters(universe_dict, top_percentile=0.3):
     sector_map = dict(zip(df_selected["Stock"], df_selected["Sector"]))
     cap_map = dict(zip(df_selected["Stock"], df_selected["Size"]))
     
-    print(f"✅ Fundamental Scoring Complete. Promoted top {cutoff} Multi-Cap stocks.")
+    print(f"✅ Institutional Quality Scoring Complete. Promoted top {cutoff} high-fidelity stocks.")
     
     return investable_tickers, sector_map, cap_map, df

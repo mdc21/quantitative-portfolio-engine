@@ -37,7 +37,12 @@ def mock_fundamental_data():
             "marketCap": 15000000000000,
             "trailingPE": 25.0,
             "priceToBook": 2.5,
-            "sector": "Energy"
+            "sector": "Energy",
+            "operatingMargins": 0.12,
+            "pegRatio": 1.8,
+            "heldPercent": 0.50,
+            "operatingCashflow": 1000000,
+            "netIncomeToCommon": 1000000
         },
         "TCS.NS": {
             "returnOnEquity": 0.35,
@@ -47,7 +52,12 @@ def mock_fundamental_data():
             "marketCap": 12000000000000,
             "trailingPE": 30.0,
             "priceToBook": 12.0,
-            "sector": "Technology"
+            "sector": "Technology",
+            "operatingMargins": 0.25,
+            "pegRatio": 2.1,
+            "heldPercent": 0.72,
+            "operatingCashflow": 2000000,
+            "netIncomeToCommon": 1800000
         },
         "HDFCBANK.NS": {
             "returnOnEquity": 0.18,
@@ -57,7 +67,12 @@ def mock_fundamental_data():
             "marketCap": 10000000000000,
             "trailingPE": 18.0,
             "priceToBook": 3.0,
-            "sector": "Financial Services"
+            "sector": "Financial Services",
+            "operatingMargins": 0.40,
+            "pegRatio": 0.9,
+            "heldPercent": 0.25,
+            "operatingCashflow": 500000,
+            "netIncomeToCommon": 800000
         },
         "INFY.NS": {
             "returnOnEquity": 0.28,
@@ -67,7 +82,12 @@ def mock_fundamental_data():
             "marketCap": 6000000000000,
             "trailingPE": 24.0,
             "priceToBook": 8.0,
-            "sector": "Technology"
+            "sector": "Technology",
+            "operatingMargins": 0.22,
+            "pegRatio": 1.5,
+            "heldPercent": 0.15,
+            "operatingCashflow": 800000,
+            "netIncomeToCommon": 1000000
         }
     }
 
