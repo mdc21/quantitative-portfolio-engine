@@ -72,13 +72,16 @@ def calculate_likely_tax(current_price, avg_buy_price, qty_to_sell, qty_longterm
         return total_tax, f"₹{total_tax:,} Est. Tax"
     return 0, "No Tax"
 
-def generate_trade_list(target_weights, holdings_list, live_prices, fresh_capital=0.0, assessed_tickers=None):
+def generate_trade_list(target_weights, holdings_list, live_prices, fresh_capital=0.0, assessed_tickers=None, tactical_audits=None):
     """
     Translates abstract percentage weights into hard integer share quantities.
+    Incorporates tactical execution notes for staggered entries/exits.
     """
     total_capital = calculate_portfolio_value(holdings_list, live_prices, fresh_capital)
     if assessed_tickers is None:
         assessed_tickers = []
+    if tactical_audits is None:
+        tactical_audits = {}
     
     if total_capital <= 0:
         return pd.DataFrame()
@@ -123,18 +126,12 @@ def generate_trade_list(target_weights, holdings_list, live_prices, fresh_capita
         price = 0.0
         try:
             raw_p = latest_prices.get(ticker, 0.0)
-            if isinstance(raw_p, pd.Series):
+            if hasattr(raw_p, 'iloc'):
                  price = float(raw_p.iloc[0])
             else:
                  price = float(raw_p)
             if math.isnan(price): price = 0.0
-            
-            if price > 0:
-                logger.debug(f"[Trade.Target] Price match for {ticker}: {price}")
-            else:
-                logger.warning(f"[Trade.Target] No price match for {ticker}")
-        except Exception as e:
-            logger.error(f"[Trade.Target] Error matching price for {ticker}: {e}")
+        except Exception:
             pass
             
         if price <= 0:
@@ -148,7 +145,7 @@ def generate_trade_list(target_weights, holdings_list, live_prices, fresh_capita
         if delta_qty != 0:
             action = "BUY" if delta_qty > 0 else "SELL"
             
-            # Tax Calculation For Sells
+            # 1. Tax Calculation For Sells
             tax_label = ""
             if action == "SELL":
                 if current_data['Avg_Buy_Price'] > 0:
@@ -162,133 +159,75 @@ def generate_trade_list(target_weights, holdings_list, live_prices, fresh_capita
                 else:
                     tax_label = "⚠️ No Buy Price"
             
+            # 2. Tactical Execution Audit
+            audit = tactical_audits.get(ticker, {})
+            mode = audit.get("Execution", "Bulk")
+            note = audit.get("Note", "")
+            grade = audit.get("Grade", "B")
+            
             action_label = "🟢 BUY" if action == "BUY" else "🔴 SELL"
             if action == "BUY":
                 group_label = "Buy Orders"
+                exec_label = f"{grade}"
             else:
                 # Use a small epsilon (0.01%) to determine if this is a strategic exit or a partial trim
                 group_label = "Strategic Exits" if target_weight < 0.0001 else "Rebalance Trims"
+                exec_label = f"Tactical {mode}" if mode == "Staggered" else "Bulk Order"
             
             trades.append({
                 "Stock": ticker,
-                "ISIN": current_data.get('Original_ISIN', ''),
                 "Action": action_label,
                 "Group": group_label,
                 "Shares": abs(int(delta_qty)),
                 "Current Price": round(price, 2),
                 "Est. Value": round(abs(delta_qty) * price, 2),
-                "Target Weight": f"{target_weight * 100:.2f}%",
+                "Execution": exec_label,
+                "Tactical Note": note,
                 "Tax Indicator": tax_label
             })
             
-    # Also evaluate stocks currently held that dropped out of the Target Weights entirely (Target Weight = 0%)
-    for hl in holdings_list:
-        clean_hl = {str(k).strip().lower(): v for k, v in hl.items()}
-        raw_ticker = str(clean_hl.get('stock_symbol', clean_hl.get('ticker', ''))).strip().upper()
-        raw_isin = str(clean_hl.get('isin_name', clean_hl.get('isin_code', ''))).strip().upper()
-        if not raw_ticker: continue
-        
-        ticker, is_confident = resolve_ticker(raw_ticker, isin=raw_isin)
-        logger.info(f"[Trade.Liquidation] Extracted: Ticker='{raw_ticker}', ISIN='{raw_isin}' | Resolved -> {ticker} (Confident: {is_confident})")
-        
-        if ticker in evaluated_tickers:
+    # Also evaluate stocks currently held that dropped out (Target Weight = 0%)
+    for ticker, data in current_map.items():
+        if ticker in evaluated_tickers or ticker == "CASH":
             continue
             
-        current_qty = float(clean_hl.get('qty_longterm', 0) or 0) + float(clean_hl.get('qty_shortterm', 0) or 0)
-        qty_lt = float(clean_hl.get('qty_longterm', 0) or 0)
-        qty_st = float(clean_hl.get('qty_shortterm', 0) or 0)
-        avg_price = float(clean_hl.get('avg_buy_price', 0) or 0)
-        
-        if not is_confident:
-            if current_qty > 0:
-                # Check if it was in the scanned universe
-                label = raw_ticker + " (Unresolved)"
-                price = 0.0
-                try:
-                    raw_p = latest_prices.get(ticker, 0.0)
-                    if isinstance(raw_p, pd.Series):
-                         price = float(raw_p.iloc[0])
-                    else:
-                         price = float(raw_p)
-                    if math.isnan(price): price = 0.0
-                except:
-                    pass
-
-                if raw_isin:
-                    if any(t.startswith(raw_ticker) for t in assessed_tickers):
-                         label = raw_ticker + " (Outside Active Universe)"
-                    else:
-                         label = raw_ticker + " (Unresolved / Not Assessed)"
+        current_qty = data['Qty']
+        if current_qty > 0:
+            price = 0.0
+            try:
+                raw_p = latest_prices.get(ticker, 0.0)
+                if hasattr(raw_p, 'iloc'):
+                     price = float(raw_p.iloc[0])
                 else:
-                     label = raw_ticker + " (Unresolved / Not Assessed)"
-
-                # Still calculate tax if we have the data
-                unresolved_tax = ""
-                if avg_price > 0:
-                    _, unresolved_tax = calculate_likely_tax(price, avg_price, current_qty, qty_lt, qty_st)
-
-                trades.append({
-                    "Stock": label,
-                    "ISIN": raw_isin,
-                    "Action": "⚪ N/A",
-                    "Group": "Unresolved Assets",
-                    "Shares": int(current_qty),
-                    "Current Price": round(price, 2),
-                    "Est. Value": round(current_qty * price, 2),
-                    "Target Weight": "Unknown",
-                    "Tax Indicator": unresolved_tax
-                })
-            # Prevent re-evaluating the same raw ticker later
-            evaluated_tickers.add(ticker)
-            continue
+                     price = float(raw_p)
+                if math.isnan(price): price = 0.0
+            except:
+                pass
             
-        if ticker not in target_weights or target_weights.get(ticker) == 0.0:
-            if current_qty > 0:
+            # Tax calculation
+            tax_label = ""
+            if data['Avg_Buy_Price'] > 0:
+                _, tax_label = calculate_likely_tax(price, data['Avg_Buy_Price'], current_qty, data['Qty_LongTerm'], data['Qty_ShortTerm'])
+            else:
+                tax_label = "⚠️ No Buy Price"
                 
-                price = 0.0
-                try:
-                    raw_p = latest_prices.get(ticker, 0.0)
-                    if isinstance(raw_p, pd.Series):
-                         price = float(raw_p.iloc[0])
-                    else:
-                         price = float(raw_p)
-                    if math.isnan(price): price = 0.0
-                    
-                    if price > 0:
-                        logger.debug(f"[Trade.Sell] Price match for {ticker}: {price}")
-                    else:
-                        logger.warning(f"[Trade.Sell] No price match for {ticker}")
-                except Exception as e:
-                    logger.error(f"[Trade.Sell] Error matching price for {ticker}: {e}")
-                    pass
-                
-                # Tax calculation for liquidations
-                tax_label = ""
-                if avg_price > 0:
-                    _, tax_label = calculate_likely_tax(price, avg_price, current_qty, qty_lt, qty_st)
-                else:
-                    tax_label = "⚠️ No Buy Price"
-                    
-                # Labeling: Rejected vs Outside Universe
-                display_name = ticker
-                if ticker in assessed_tickers:
-                    display_name = f"{ticker} (Rejected by Rules)"
-                else:
-                    display_name = f"{ticker} (Outside Active Universe)"
-                    
-                trades.append({
-                    "Stock": display_name,
-                    "ISIN": raw_isin,
-                    "Action": "🔴 SELL",
-                    "Group": "Strategic Exits",
-                    "Shares": int(current_qty),
-                    "Current Price": round(price, 2),
-                    "Est. Value": round(current_qty * price, 2),
-                    "Target Weight": "0.00%",
-                    "Tax Indicator": tax_label
-                })
+            # Tactical Audit for full exit
+            audit = tactical_audits.get(ticker, {})
+            mode = audit.get("Execution", "Bulk")
+            note = audit.get("Note", "")
+            
+            trades.append({
+                "Stock": ticker,
+                "Action": "🔴 SELL",
+                "Group": "Strategic Exits",
+                "Shares": int(current_qty),
+                "Current Price": round(price, 2),
+                "Est. Value": round(current_qty * price, 2),
+                "Execution": f"Tactical {mode}" if mode == "Staggered" else "Bulk Order",
+                "Tactical Note": note,
+                "Tax Indicator": tax_label
+            })
 
-    # Sort so BUYs are together, SELLs together
     df_trades = pd.DataFrame(trades)
     if not df_trades.empty:
         df_trades = df_trades.sort_values(by=["Action", "Est. Value"], ascending=[True, False])

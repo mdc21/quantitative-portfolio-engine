@@ -14,6 +14,7 @@ from core.macro import load_macro_data, compute_macro_regime
 from core.universe import fetch_broad_universe, apply_fundamental_filters
 from core.ticker_mapper import resolve_ticker
 from core.state import load_portfolio_state, save_portfolio_state
+from core.tactical import get_bulk_tactical_audit
 from core.logger import logger
 
 st.set_page_config(page_title="Quant Dashboard", layout="wide", page_icon="📈")
@@ -246,7 +247,7 @@ try:
                 if current_w < min_weight:
                     deficit += (min_weight - current_w)
                     raw_weights[pt] = min_weight
-                    logger.info(f"[HoldingProtection] Raised {pt} weight from {current_w:.4f} to {min_weight:.4f}")
+            logger.info(f"[HoldingProtection] Raised {pt} weight from {current_w:.4f} to {min_weight:.4f}")
             
             # Redistribute deficit proportionally from non-protected, non-CASH stocks
             if deficit > 0:
@@ -256,13 +257,23 @@ try:
                 if total_non_prot > 0:
                     for s in non_protected:
                         raw_weights[s] -= deficit * (non_protected[s] / total_non_prot)
-                        raw_weights[s] = max(raw_weights[s], 0)  # Floor at 0
+                        raw_weights[s] = max(raw_weights[s], 0)
+    
+    # 3. Final CASH Adjustment (Total must be 1.0)
+    total_non_cash = sum([w for s, w in raw_weights.items() if s != "CASH"])
+    raw_weights["CASH"] = max(0, 1.0 - total_non_cash)
 
-    # Apply Churn Control
+    # --- TACTICAL EXECUTION AUDIT ---
+    with st.spinner("🔍 Stage 3: Running Tactical Technical Audits..."):
+        current_map = {str(k.get('stock_symbol', k.get('ticker', ''))).upper(): k for k in st.session_state['holdings_list']}
+        audit_list = list(set(selected + [t for t in current_map if t]))
+        from core.tactical import get_bulk_tactical_audit
+        tactical_audits = get_bulk_tactical_audit(prices[audit_list]) if not prices.empty else {}
+
+    # Apply Churn Control (Turnover limit)
     old_state = load_portfolio_state()
     # Forcibly purge legacy Index bugs from yesterday's JSON
-    if "^NSEI" in old_state:
-        del old_state["^NSEI"]
+    if "^NSEI" in old_state: del old_state["^NSEI"]
         
     weights = apply_turnover_control(old_state, raw_weights, max_turnover)
 
@@ -637,11 +648,21 @@ try:
             # Select key columns including specialized adaptive and valuation metrics
             display_df = display_df[["Stock", "Size", "Sector", "Score", "ROCE", "ROA", "Rev PEG", "ForwardPE", "PB", "SalesGrowth", "DebtEquity"]]
             
+            # --- INJECT TACTICAL GRADES ---
+            if 'tactical_audits' in locals():
+                display_df["Grade"] = display_df["Stock"].map(lambda x: tactical_audits.get(x, {}).get("Grade", "B"))
+                display_df["Trend"] = display_df["Stock"].map(lambda x: tactical_audits.get(x, {}).get("Trend", "Neutral"))
+                # Reorder to put Grade/Trend early
+                cols = ["Stock", "Grade", "Trend", "Score", "Sector", "Size", "Rev PEG", "ForwardPE", "PB", "ROCE", "DebtEquity"]
+                display_df = display_df[[c for c in cols if c in display_df.columns]]
+            
             st.dataframe(
                 display_df, 
                 hide_index=True,
                 column_config={
                     "Score": st.column_config.NumberColumn("Score", format="%.2f"),
+                    "Grade": st.column_config.TextColumn("Tactical", help="Technical Entry Grade: A (Strong) to D (Avoid)"),
+                    "Trend": st.column_config.TextColumn("Trend", help="Price vs SMA50/200 Status"),
                     "ROCE": st.column_config.NumberColumn("ROCE", format="%.2f%%"),
                     "ROA": st.column_config.NumberColumn("ROA", format="%.2f%%"),
                     "Rev PEG": st.column_config.NumberColumn("Rev PEG", format="%.2f"),
@@ -668,10 +689,11 @@ try:
                 from core.execution import generate_trade_list
                 df_trades = generate_trade_list(
                     weights, 
-                    holdings_list, 
+                    st.session_state['holdings_list'], 
                     prices, 
-                    fresh_capital,
-                    assessed_tickers=all_assessed_tickers
+                    float(fresh_capital),
+                    all_assessed_tickers,
+                    tactical_audits=tactical_audits
                 )
                 
             if df_trades.empty:
@@ -727,6 +749,14 @@ try:
                                 ),
                                 "Target Weight": st.column_config.TextColumn(
                                     "Target %"
+                                ),
+                                "Execution": st.column_config.TextColumn(
+                                    "Plan",
+                                    help="Execution strategy: Bulk (Immediate) vs. Staggered (Trend Follow)"
+                                ),
+                                "Tactical Note": st.column_config.TextColumn(
+                                    "Institutional Note",
+                                    width="large"
                                 )
                             }
                         )
