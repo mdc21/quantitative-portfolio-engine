@@ -46,25 +46,25 @@ def get_cached_prices(tickers):
 def get_cached_macro():
     return load_macro_data()
 
-# --- SIDEBAR & INTERACTIVITY ---
-st.sidebar.title("⚙️ Strategy Parameters")
-
-
-try:
-    logger.info("Executing Streamlit Pipeline - Rebuilding Target Matrix...")
+    # --- SIDEBAR & INTERACTIVITY ---
+    st.sidebar.title("⚙️ Strategy Parameters")
     
-    st.markdown("## 📊 Quant Portfolio Dashboard")
-    st.caption("A reactive, multi-factor quantitative portfolio builder using Risk-Adjusted Momentum.")
+    st.sidebar.header("Strategy Tuning")
+    fund_cutoff = st.sidebar.slider("Fundamental Quality Cutoff (%)", 0.1, 1.0, 0.3, help="Controls the percentage of the universe that passes the initial quality audit (ROCE, Cash Quality, Promoter Skin).")
+    mom_lookback = st.sidebar.slider("Momentum Lookback (Days)", 30, 252, 90, help="Number of trading days to track for historical price momentum. Usually 90-180 days.")
+    vol_lookback = st.sidebar.slider("Volatility Lookback (Days)", 30, 252, 60, help="Amount of history used to compute standard deviation. Lower values react faster to market crashes.")
+    top_pct_filter = st.sidebar.slider("Momentum Retention Cutoff (%)", 0.1, 1.0, 0.5, help="Percentage of fundamental survivors to execute Momentum buying on. Example: 0.5 means buy top 50%.")
+    max_turnover = st.sidebar.slider("Max Turnover Damper (%)", 0.05, 1.0, 0.30, help="Smooths giant target rebalances to prevent huge trading fees & slippage. 0.30 means weights move 30% per iteration.")
 
     # --- UNIVERSE DISCOVERY ---
     @st.cache_data(ttl=86400)
-    def get_investable_universe():
-        logger.info("Triggered Universe Cache Refresh.")
+    def get_investable_universe(top_pct):
+        logger.info(f"Triggered Universe Cache Refresh with Cutoff: {top_pct}")
         broad_universe = fetch_broad_universe("nifty50")
-        return apply_fundamental_filters(broad_universe)
+        return apply_fundamental_filters(broad_universe, top_percentile=top_pct)
 
     with st.spinner("🤖 Evaluating Fundamental Screener (Daily Cache)..."):
-        investable_tickers, sector_map, cap_map, scoring_df = get_investable_universe()
+        investable_tickers, sector_map, cap_map, scoring_df = get_investable_universe(fund_cutoff)
         all_assessed_tickers = scoring_df["Stock"].tolist() if not scoring_df.empty else investable_tickers
 
     # Fetch - Expand fetch to include user's owner tickers for comparison chart
@@ -89,13 +89,6 @@ try:
         nifty_prices = prices["^NSEI"]
         prices = prices.drop(columns=["^NSEI"])
         
-    # Sidebar - Strategy Only
-    st.sidebar.header("Strategy Tuning")
-    mom_lookback = st.sidebar.slider("Momentum Lookback (Days)", 30, 252, 90, help="Number of trading days to track for historical price momentum. Usually 90-180 days.")
-    vol_lookback = st.sidebar.slider("Volatility Lookback (Days)", 30, 252, 60, help="Amount of history used to compute standard deviation. Lower values react faster to market crashes.")
-    top_pct_filter = st.sidebar.slider("Momentum Retention Cutoff (%)", 0.1, 1.0, 0.5, help="Percentage of fundamental survivors to execute Momentum buying on. Example: 0.5 means buy top 50%.")
-    max_turnover = st.sidebar.slider("Max Turnover Damper (%)", 0.05, 1.0, 0.30, help="Smooths giant target rebalances to prevent huge trading fees & slippage. 0.30 means weights move 30% per iteration.")
-    
     st.sidebar.header("Multi-Cap Bounds")
     cap_large = st.sidebar.slider("Max Large Cap Limit (%)", 0.0, 1.0, 0.70, help="Maximum portfolio % constrained to Nifty 50 constituents.")
     cap_mid = st.sidebar.slider("Max Mid Cap Limit (%)", 0.0, 1.0, 0.20, help="Maximum portfolio % constrained to Nifty Next 50 constituents.")
