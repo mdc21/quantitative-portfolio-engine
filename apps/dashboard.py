@@ -563,20 +563,24 @@ try:
         if not scoring_df.empty:
             # Format for display
             display_df = scoring_df.copy()
-            display_df["Fundamental_Score"] = display_df["Fundamental_Score"] * 100
+            display_df["Score"] = display_df["Fundamental_Score"] * 100
             display_df["ROCE"] = display_df["ROCE"] * 100
             display_df["ProfitGrowth"] = display_df["ProfitGrowth"] * 100
             display_df["SalesGrowth"] = display_df["SalesGrowth"] * 100
+            display_df["ROA"] = display_df["ROA"] * 100
+            display_df["NIM"] = display_df["NIM"] * 100
             
-            # Select key columns including new Size tier
-            display_df = display_df[["Stock", "Size", "Sector", "Fundamental_Score", "ROCE", "ProfitGrowth", "SalesGrowth", "DebtEquity"]]
+            # Select key columns including specialized adaptive metrics
+            display_df = display_df[["Stock", "Size", "Sector", "Score", "ROCE", "ROA", "NIM", "ProfitGrowth", "SalesGrowth", "DebtEquity"]]
             
             st.dataframe(
                 display_df, 
                 hide_index=True,
                 column_config={
-                    "Fundamental_Score": st.column_config.NumberColumn("Score", format="%.2f"),
+                    "Score": st.column_config.NumberColumn("Score", format="%.2f"),
                     "ROCE": st.column_config.NumberColumn("ROCE", format="%.2f%%"),
+                    "ROA": st.column_config.NumberColumn("ROA", format="%.2f%%"),
+                    "NIM": st.column_config.NumberColumn("NIM", format="%.2f%%"),
                     "ProfitGrowth": st.column_config.NumberColumn("Profit Gr.", format="%.2f%%"),
                     "SalesGrowth": st.column_config.NumberColumn("Sales Gr.", format="%.2f%%"),
                     "DebtEquity": st.column_config.NumberColumn("D/E", format="%.2f")

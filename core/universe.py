@@ -95,29 +95,35 @@ def _evaluate_fundamentals(item):
 
         sector = info.get("sector", "Unknown_Sector")
         
+        # Specialized metrics for live path (standardizing on yf names)
+        # NIM and NPA are not in standard yf.info, so we use proxies or defaults for live
+        roa = info.get("returnOnAssets", 0.01) or 0.01
+        nim = info.get("operatingMargins", 0.0) if sector == "Financial Services" else 0.0
+        npa = 0.015 # Global baseline unless specific data source found
+        
     except Exception:
         # 🛡️ Simulation Mode: Curated profiles for blue-chips, realistic randoms for rest
         # This prevents TCS/HDFCBANK/RELIANCE from getting absurd scores due to hash luck
         CURATED_PROFILES = {
             "RELIANCE.NS":   {"roe": 0.12, "pg": 0.18, "sg": 0.22, "de": 40,  "opm": 0.15, "peg": 1.3, "pe": 28, "pb": 2.5, "ph": 0.50, "ocf": 1.1, "sector": "Energy"},
             "TCS.NS":        {"roe": 0.45, "pg": 0.12, "sg": 0.15, "de": 5,   "opm": 0.25, "peg": 2.5, "pe": 30, "pb": 14,  "ph": 0.72, "ocf": 1.2, "sector": "Technology"},
-            "HDFCBANK.NS":   {"roe": 0.16, "pg": 0.20, "sg": 0.18, "de": 80,  "opm": 0.35, "peg": 1.5, "pe": 20, "pb": 3.0, "ph": 0.26, "ocf": 0.9, "sector": "Financial Services"},
-            "ICICIBANK.NS":  {"roe": 0.17, "pg": 0.25, "sg": 0.20, "de": 85,  "opm": 0.32, "peg": 1.4, "pe": 18, "pb": 3.2, "ph": 0.00, "ocf": 0.8, "sector": "Financial Services"},
+            "HDFCBANK.NS":   {"roe": 0.16, "pg": 0.20, "sg": 0.18, "de": 80,  "opm": 0.35, "peg": 1.5, "pe": 20, "pb": 3.0, "ph": 0.26, "ocf": 0.9, "sector": "Financial Services", "roa": 0.021, "nim": 0.044, "npa": 0.012},
+            "ICICIBANK.NS":  {"roe": 0.17, "pg": 0.25, "sg": 0.20, "de": 85,  "opm": 0.32, "peg": 1.4, "pe": 18, "pb": 3.2, "ph": 0.00, "ocf": 0.8, "sector": "Financial Services", "roa": 0.022, "nim": 0.045, "npa": 0.015},
             "INFY.NS":       {"roe": 0.32, "pg": 0.10, "sg": 0.12, "de": 10,  "opm": 0.22, "peg": 2.2, "pe": 27, "pb": 8.5, "ph": 0.31, "ocf": 1.1, "sector": "Technology"},
-            "SBIN.NS":       {"roe": 0.18, "pg": 0.30, "sg": 0.15, "de": 90,  "opm": 0.25, "peg": 0.8, "pe": 10, "pb": 1.8, "ph": 0.57, "ocf": 0.7, "sector": "Financial Services"},
+            "SBIN.NS":       {"roe": 0.18, "pg": 0.30, "sg": 0.15, "de": 90,  "opm": 0.25, "peg": 0.8, "pe": 10, "pb": 1.8, "ph": 0.57, "ocf": 0.7, "sector": "Financial Services", "roa": 0.011, "nim": 0.038, "npa": 0.025},
             "BHARTIARTL.NS": {"roe": 0.18, "pg": 0.35, "sg": 0.18, "de": 120, "opm": 0.38, "peg": 1.8, "pe": 35, "pb": 7.0, "ph": 0.55, "ocf": 1.0, "sector": "Technology"},
             "ITC.NS":        {"roe": 0.28, "pg": 0.10, "sg": 0.08, "de": 0,   "opm": 0.35, "peg": 2.0, "pe": 25, "pb": 7.5, "ph": 0.00, "ocf": 1.3, "sector": "Consumer"},
             "LT.NS":         {"roe": 0.15, "pg": 0.15, "sg": 0.20, "de": 70,  "opm": 0.12, "peg": 1.6, "pe": 32, "pb": 5.0, "ph": 0.00, "ocf": 0.9, "sector": "Industrials"},
-            "BAJFINANCE.NS": {"roe": 0.22, "pg": 0.28, "sg": 0.25, "de": 140, "opm": 0.40, "peg": 1.5, "pe": 35, "pb": 7.0, "ph": 0.56, "ocf": 0.6, "sector": "Financial Services"},
+            "BAJFINANCE.NS": {"roe": 0.22, "pg": 0.28, "sg": 0.25, "de": 140, "opm": 0.40, "peg": 1.5, "pe": 35, "pb": 7.0, "ph": 0.56, "ocf": 0.6, "sector": "Financial Services", "roa": 0.045, "nim": 0.10,  "npa": 0.008},
             "HINDUNILVR.NS": {"roe": 0.60, "pg": 0.08, "sg": 0.05, "de": 0,   "opm": 0.23, "peg": 3.5, "pe": 55, "pb": 10,  "ph": 0.62, "ocf": 1.2, "sector": "Consumer"},
-            "KOTAKBANK.NS":  {"roe": 0.14, "pg": 0.18, "sg": 0.15, "de": 75,  "opm": 0.30, "peg": 2.0, "pe": 22, "pb": 3.5, "ph": 0.26, "ocf": 0.8, "sector": "Financial Services"},
+            "KOTAKBANK.NS":  {"roe": 0.14, "pg": 0.18, "sg": 0.15, "de": 75,  "opm": 0.30, "peg": 2.0, "pe": 22, "pb": 3.5, "ph": 0.26, "ocf": 0.8, "sector": "Financial Services", "roa": 0.024, "nim": 0.048, "npa": 0.011},
             "SUNPHARMA.NS":  {"roe": 0.16, "pg": 0.20, "sg": 0.12, "de": 15,  "opm": 0.28, "peg": 1.2, "pe": 35, "pb": 5.0, "ph": 0.54, "ocf": 1.0, "sector": "Healthcare"},
             "MARUTI.NS":     {"roe": 0.15, "pg": 0.22, "sg": 0.15, "de": 0,   "opm": 0.12, "peg": 1.5, "pe": 30, "pb": 5.5, "ph": 0.56, "ocf": 1.1, "sector": "Consumer"},
             "TATAMOTORS.NS": {"roe": 0.12, "pg": 0.40, "sg": 0.25, "de": 90,  "opm": 0.10, "peg": 0.7, "pe": 8,  "pb": 2.0, "ph": 0.46, "ocf": 0.9, "sector": "Consumer"},
             "TITAN.NS":      {"roe": 0.30, "pg": 0.22, "sg": 0.20, "de": 30,  "opm": 0.12, "peg": 2.8, "pe": 65, "pb": 17,  "ph": 0.53, "ocf": 0.8, "sector": "Consumer"},
             "WIPRO.NS":      {"roe": 0.16, "pg": 0.05, "sg": 0.04, "de": 25,  "opm": 0.17, "peg": 2.5, "pe": 22, "pb": 3.5, "ph": 0.73, "ocf": 1.1, "sector": "Technology"},
             "HCLTECH.NS":    {"roe": 0.24, "pg": 0.12, "sg": 0.13, "de": 10,  "opm": 0.20, "peg": 2.0, "pe": 25, "pb": 6.0, "ph": 0.60, "ocf": 1.2, "sector": "Technology"},
-            "AXISBANK.NS":   {"roe": 0.17, "pg": 0.22, "sg": 0.18, "de": 85,  "opm": 0.30, "peg": 1.2, "pe": 14, "pb": 2.3, "ph": 0.08, "ocf": 0.7, "sector": "Financial Services"},
+            "AXISBANK.NS":   {"roe": 0.17, "pg": 0.22, "sg": 0.18, "de": 85,  "opm": 0.30, "peg": 1.2, "pe": 14, "pb": 2.3, "ph": 0.08, "ocf": 0.7, "sector": "Financial Services", "roa": 0.018, "nim": 0.040, "npa": 0.018},
             "ASIANPAINT.NS": {"roe": 0.28, "pg": 0.10, "sg": 0.08, "de": 30,  "opm": 0.18, "peg": 3.0, "pe": 55, "pb": 14,  "ph": 0.53, "ocf": 1.0, "sector": "Consumer"},
         }
         
@@ -135,6 +141,10 @@ def _evaluate_fundamentals(item):
             promoter_hold = profile["ph"]
             ocf_ni_ratio = profile["ocf"]
             sector = profile["sector"]
+            # Specialized Banking Metrics
+            roa = profile.get("roa", 0.015) 
+            nim = profile.get("nim", 0.035)
+            npa = profile.get("npa", 0.012)
         else:
             data_source = "Synthetic Random"
             # Size-aware random generation for non-curated tickers
@@ -151,6 +161,11 @@ def _evaluate_fundamentals(item):
             promoter_hold = random.uniform(0.25, 0.60) if size == "Large" else random.uniform(0.10, 0.55)
             ocf_ni_ratio = random.uniform(0.4, 1.1) if size == "Large" else random.uniform(0.2, 1.0)
             sector = random.choice(["Technology", "Financial Services", "Energy", "Healthcare", "Consumer", "Industrials"])
+            
+            # Synthetic specialized metrics
+            roa = random.uniform(0.005, 0.025) if sector == "Financial Services" else 0.0
+            nim = random.uniform(0.02, 0.05) if sector == "Financial Services" else 0.0
+            npa = random.uniform(0.005, 0.05) if sector == "Financial Services" else 0.0
         
         market_cap = 1e12 if size == "Large" else (5e11 if size == "Mid" else 1e11)
         
@@ -172,7 +187,10 @@ def _evaluate_fundamentals(item):
         "OPM": opm,
         "PEG": peg,
         "PromoterHold": promoter_hold,
-        "OCF_NI_Ratio": ocf_ni_ratio
+        "OCF_NI_Ratio": ocf_ni_ratio,
+        "ROA": roa,
+        "NIM": nim,
+        "NPA": npa
     }
 
 def apply_fundamental_filters(universe_dict, top_percentile=0.3):
@@ -192,49 +210,37 @@ def apply_fundamental_filters(universe_dict, top_percentile=0.3):
         logger.warning(f"[Screener] Critical Failure: Fundamental matrix is empty for {len(universe_dict)} stocks.")
         return [], {}, {}, df
 
-    # 📌 Threshold-based Normalization (MTA Style)
-    # We map metrics to [0, 1] based on healthy institutional benchmarks
-    df["Q_ROCE"] = df["ROCE"].apply(lambda x: min(max(x, 0) / 0.25, 1.0))
-    df["Q_Profit"] = df["ProfitGrowth"].apply(lambda x: min(max(x, 0) / 0.25, 1.0))
-    df["Q_Sales"] = df["SalesGrowth"].apply(lambda x: min(max(x, 0) / 0.20, 1.0))
-    df["Q_Promoter"] = df["PromoterHold"].apply(lambda x: min(max(x, 0) / 0.50, 1.0))
-    df["Q_Margin"] = df["OPM"].apply(lambda x: min(max(x, 0) / 0.20, 1.0))
+    # 📌 Specialized Adaptive Scoring Engine
+    def calculate_adaptive_score(row):
+        sector = row["Sector"]
+        
+        # Financials (Banks & NBFCs): Focus on ROA, NIM, and Asset Quality
+        if sector == "Financial Services":
+            q_roa = min(max(row["ROA"], 0) / 0.018, 1.2) # Target 1.8%+ ROA
+            q_nim = min(max(row["NIM"], 0) / 0.04, 1.2)  # Target 4.0%+ NIM
+            q_npa = max(0, 1 - (row["NPA"] / 0.05))      # Penalty for NPA > 5%
+            return 0.40 * q_roa + 0.40 * q_nim + 0.20 * q_npa
+            
+        # Industrials & Energy: Focus on ROCE and Debt Efficiency
+        if sector in ["Industrials", "Energy"]:
+            q_ce = min(max(row["ROCE"], 0) / 0.18, 1.0)
+            q_debt = max(0, 1 - (min(row["DebtEquity"], 150) / 100))
+            return 0.50 * q_ce + 0.50 * q_debt
+            
+        # IT & FMCG: Focus on Margins and Growth
+        if sector in ["Technology", "Consumer"]:
+            q_margin = min(max(row["OPM"], 0) / 0.22, 1.0)
+            q_growth = min(max(row["ProfitGrowth"], 0) / 0.18, 1.0)
+            q_cash = min(max(row["OCF_NI_Ratio"], 0) / 0.8, 1.0)
+            return 0.40 * q_margin + 0.30 * q_growth + 0.30 * q_cash
+            
+        # General Fallback (Healthcare, Utilities, etc.)
+        q_roce = min(max(row["ROCE"], 0) / 0.15, 1.0)
+        q_growth = min(max(row["ProfitGrowth"], 0) / 0.12, 1.0)
+        q_debt = max(0, 1 - (min(row["DebtEquity"], 150) / 100))
+        return 0.40 * q_roce + 0.30 * q_growth + 0.30 * q_debt
 
-    # 📌 Debt/Equity Exemption for Financial Services
-    # Banks/NBFCs carry structurally high D/E because deposits = liabilities.
-    # Penalising HDFCBANK for D/E of 80 (normal banking) is analytically incorrect.
-    def compute_debt_quality(row):
-        if row["Sector"] == "Financial Services":
-            return 0.80  # Neutral-high score; banks are inherently leveraged
-        return max(0, 1 - (min(row["DebtEquity"], 200) / 100))
-    
-    df["Q_Debt"] = df.apply(compute_debt_quality, axis=1)
-
-    # 📌 Cash Quality Exemption for Financials (Banks and NBFCs)
-    # Financial institutions have naturally volatile OCF due to lending/deposits
-    def compute_cash_quality(row):
-        if row["Sector"] == "Financial Services":
-            return 1.0 # Neutral/Full Score for Financials 
-        return min(max(row["OCF_NI_Ratio"], 0) / 1.0, 1.0)
-    
-    df["Q_Cash"] = df.apply(compute_cash_quality, axis=1)
-
-    # 📌 Composite Fundamental Score (Weighted sum of institutional benchmarks)
-    df["Fundamental_Score"] = (
-        0.20 * df["Q_ROCE"] +
-        0.15 * df["Q_Profit"] +
-        0.10 * df["Q_Sales"] +
-        0.15 * df["Q_Debt"] +
-        0.15 * df["Q_Promoter"] +
-        0.15 * df["Q_Cash"] +
-        0.10 * df["Q_Margin"]
-    )
-
-    # 📌 Hard Filters / Penalties for Quality Red Flags
-    # PEG > 2.5 (Extreme bubble penalty) or OCF/NI < 0.4 (Cash quality/fraud risk penalty)
-    # NOTE: OCF/NI penalty is skipped for Financial Services
-    df.loc[df["PEG"] > 2.5, "Fundamental_Score"] *= 0.5  
-    df.loc[(df["OCF_NI_Ratio"] < 0.4) & (df["Sector"] != "Financial Services"), "Fundamental_Score"] *= 0.3 
+    df["Fundamental_Score"] = df.apply(calculate_adaptive_score, axis=1)
 
     # Still sort by score to find the elite few
     df = df.sort_values("Fundamental_Score", ascending=False)
@@ -246,6 +252,6 @@ def apply_fundamental_filters(universe_dict, top_percentile=0.3):
     sector_map = dict(zip(df_selected["Stock"], df_selected["Sector"]))
     cap_map = dict(zip(df_selected["Stock"], df_selected["Size"]))
     
-    print(f"✅ Institutional Quality Scoring Complete. Promoted top {cutoff} high-fidelity stocks.")
+    logger.info(f"✅ Adaptive Quality Scoring Complete. Promoted top {cutoff} high-fidelity stocks.")
     
     return investable_tickers, sector_map, cap_map, df
