@@ -268,7 +268,7 @@ try:
         current_map = {str(k.get('stock_symbol', k.get('ticker', ''))).upper(): k for k in st.session_state['holdings_list']}
         audit_list = list(set(selected + [t for t in current_map if t]))
         from core.tactical import get_bulk_tactical_audit
-        tactical_audits = get_bulk_tactical_audit(prices[audit_list]) if not prices.empty else {}
+        st.session_state['tactical_audits'] = get_bulk_tactical_audit(prices[audit_list]) if not prices.empty else {}
 
     # Apply Churn Control (Turnover limit)
     old_state = load_portfolio_state()
@@ -649,7 +649,8 @@ try:
             display_df = display_df[["Stock", "Size", "Sector", "Score", "ROCE", "ROA", "Rev PEG", "ForwardPE", "PB", "SalesGrowth", "DebtEquity"]]
             
             # --- INJECT TACTICAL GRADES ---
-            if 'tactical_audits' in locals():
+            if 'tactical_audits' in st.session_state and st.session_state['tactical_audits']:
+                tactical_audits = st.session_state['tactical_audits']
                 display_df["Grade"] = display_df["Stock"].map(lambda x: tactical_audits.get(x, {}).get("Grade", "B (Neutral)"))
                 display_df["Trend"] = display_df["Stock"].map(lambda x: tactical_audits.get(x, {}).get("Trend", "Neutral"))
                 # Reorder to put Grade/Trend early
@@ -693,7 +694,7 @@ try:
                     prices, 
                     float(fresh_capital),
                     all_assessed_tickers,
-                    tactical_audits=tactical_audits
+                    tactical_audits=st.session_state.get('tactical_audits', {})
                 )
                 
             if df_trades.empty:
