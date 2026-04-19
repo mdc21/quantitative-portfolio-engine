@@ -137,8 +137,16 @@ def apply_fundamental_filters(universe_dict, top_percentile=0.3):
     df["Q_Sales"] = df["SalesGrowth"].apply(lambda x: min(max(x, 0) / 0.20, 1.0))
     df["Q_Debt"] = df["DebtEquity"].apply(lambda x: max(0, 1 - (min(x, 200) / 100))) # 0 at 100% (1:1), negative after
     df["Q_Promoter"] = df["PromoterHold"].apply(lambda x: min(max(x, 0) / 0.50, 1.0))
-    df["Q_Cash"] = df["OCF_NI_Ratio"].apply(lambda x: min(max(x, 0) / 1.0, 1.0))
     df["Q_Margin"] = df["OPM"].apply(lambda x: min(max(x, 0) / 0.20, 1.0))
+
+    # 📌 Cash Quality Exemption for Financials (Banks and NBFCs)
+    # Financial institutions have naturally volatile OCF due to lending/deposits
+    def compute_cash_quality(row):
+        if row["Sector"] == "Financial Services":
+            return 1.0 # Neutral/Full Score for Financials 
+        return min(max(row["OCF_NI_Ratio"], 0) / 1.0, 1.0)
+    
+    df["Q_Cash"] = df.apply(compute_cash_quality, axis=1)
 
     # 📌 Composite Fundamental Score (Weighted sum of institutional benchmarks)
     df["Fundamental_Score"] = (
@@ -153,8 +161,9 @@ def apply_fundamental_filters(universe_dict, top_percentile=0.3):
 
     # 📌 Hard Filters / Penalties for Quality Red Flags
     # PEG > 2.5 (Extreme bubble penalty) or OCF/NI < 0.4 (Cash quality/fraud risk penalty)
+    # NOTE: OCF/NI penalty is skipped for Financial Services
     df.loc[df["PEG"] > 2.5, "Fundamental_Score"] *= 0.5  
-    df.loc[df["OCF_NI_Ratio"] < 0.4, "Fundamental_Score"] *= 0.3 
+    df.loc[(df["OCF_NI_Ratio"] < 0.4) & (df["Sector"] != "Financial Services"), "Fundamental_Score"] *= 0.3 
 
     # Still sort by score to find the elite few
     df = df.sort_values("Fundamental_Score", ascending=False)
