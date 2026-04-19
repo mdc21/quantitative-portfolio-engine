@@ -46,6 +46,7 @@ def get_cached_prices(tickers):
 def get_cached_macro():
     return load_macro_data()
 
+try:
     # --- SIDEBAR & INTERACTIVITY ---
     st.sidebar.title("⚙️ Strategy Parameters")
     
