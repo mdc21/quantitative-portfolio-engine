@@ -72,3 +72,17 @@ def test_apply_fundamental_filters_financial_exemption(mocker):
     # HDFCBANK should have a high Q_Cash (1.0) despite low OCF because it is Financial Services
     assert df.iloc[0]["Q_Cash"] == 1.0
     assert df.iloc[0]["Fundamental_Score"] > 0.4 # Should not be slashed by 0.3x
+
+def test_apply_fundamental_filters_min_1_policy(mocker, mock_fundamental_data):
+    """Ensures cutoff always returns at least 1 stock even if percentile is very low."""
+    mocker.patch("core.universe.yf.Ticker", side_effect=Exception("API Down"))
+    
+    # 10 tickers in universe
+    universe_dict = {f"TICKER_{i}.NS": "Small" for i in range(10)}
+    
+    # Test with 0.1% percentile (int(10 * 0.001) = 0)
+    tickers, sector_map, cap_map, df = apply_fundamental_filters(universe_dict, top_percentile=0.001)
+    
+    # Min-1 policy should ensure 1 ticker is returned
+    assert len(tickers) == 1
+    assert not df.empty

@@ -46,6 +46,14 @@ def get_cached_prices(tickers):
 def get_cached_macro():
     return load_macro_data()
 
+# --- DASHBOARD AESTHETICS ---
+st.markdown("""
+<div style="background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%); padding: 25px; border-radius: 12px; margin-bottom: 25px; border: 1px solid rgba(255,255,255,0.1); box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);">
+    <h1 style="color: white; margin: 0; font-family: 'Inter', sans-serif;">📊 Quant Portfolio Dashboard</h1>
+    <p style="color: rgba(255,255,255,0.8); margin: 5px 0 0 0; font-size: 1.1rem;">Institutional-Grade Multi-Cap Quantitative Analytics</p>
+</div>
+""", unsafe_allow_html=True)
+
 try:
     # --- SIDEBAR & INTERACTIVITY ---
     st.sidebar.title("⚙️ Strategy Parameters")
@@ -133,15 +141,18 @@ try:
 
     # Compute factors dynamically ONLY for the fundamentally approved survivors (Top 30%)
     # This ensures we don't accidentally buy a low-quality stock just because it has high momentum.
-    buy_list_prices = prices[[t for t in investable_tickers if t in prices.columns]]
+    # Compute factors dynamically ONLY for the fundamentally approved survivors
+    # This ensures we don't accidentally buy a low-quality stock just because it has high momentum.
+    buy_list_tickers = [t for t in investable_tickers if t in prices.columns]
+    buy_list_prices = prices[buy_list_tickers]
     
     if buy_list_prices.empty:
-        if scoring_df.empty or investable_tickers == []:
+        if scoring_df.empty or not investable_tickers:
             st.warning("⚠️ **Strategy Gap:** No stocks passed the current Institutional Quality criteria.")
-            st.info("💡 **Resolution:** Try moving the **Fundamental Quality Cutoff (%)** slider to a higher value to broaden the screening funnel.")
+            st.info("💡 **Resolution:** Try moving the **Fundamental Quality Cutoff (%)** slider in the sidebar to a higher value to broaden the screening funnel.")
         else:
-            st.error("⚠️ **Data Connectivity Issue:** Stocks passed the quality check, but no historical price data was found.")
-            st.info("💡 **Resolution:** The system is currently operating in network-restricted mode. Check `logs/quant_system.log` to confirm if Simulation Mode is active.")
+            st.error("📉 **Data Gap:** Fundamental survivors were found, but no matching market price data was available for them. "
+                     "Check your network connectivity or confirm if Simulation Mode is generating enough history.")
         st.stop()
 
     scores = compute_factor_scores(buy_list_prices, {

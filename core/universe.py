@@ -2,6 +2,7 @@ import pandas as pd
 import yfinance as yf
 from curl_cffi import requests
 from concurrent.futures import ThreadPoolExecutor
+from core.logger import logger
 
 # Global session to mimic browser and bypass Yahoo Finance 401/Invalid Crumb errors
 session = requests.Session(impersonate="chrome110")
@@ -181,14 +182,14 @@ def apply_fundamental_filters(universe_dict, top_percentile=0.3):
     items = list(universe_dict.items())
     
     with ThreadPoolExecutor(max_workers=10) as executor:
-        results = executor.map(_evaluate_fundamentals, items)
+        # Safely exhaust the iterator to prevent NameErrors in workers or incomplete data
+        results = list(executor.map(_evaluate_fundamentals, items))
         
-        for res in results:
-            if res is not None:
-                raw_data.append(res)
+    raw_data = [res for res in results if res is not None]
                 
     df = pd.DataFrame(raw_data)
     if df.empty:
+        logger.warning(f"[Screener] Critical Failure: Fundamental matrix is empty for {len(universe_dict)} stocks.")
         return [], {}, {}, df
 
     # 📌 Threshold-based Normalization (MTA Style)
