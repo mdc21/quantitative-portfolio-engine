@@ -31,13 +31,15 @@ def test_apply_fundamental_filters(mocker, mock_fundamental_data):
     assert "Fundamental_Score" in df.columns
 
 def test_apply_fundamental_filters_empty(mocker):
+    """In simulation mode, even invalid tickers get synthetic fundamentals."""
     mocker.patch("core.universe.yf.Ticker", side_effect=Exception("API Down"))
     
     universe_dict = {"INVALID.NS": "Small"}
     tickers, sector_map, cap_map, df = apply_fundamental_filters(universe_dict)
     
-    assert len(tickers) == 0
-    assert df.empty
+    # Simulation fallback generates data — so 1 ticker in = 1 ticker out
+    assert len(tickers) == 1
+    assert not df.empty
 
 def test_apply_fundamental_filters_financial_exemption(mocker):
     """

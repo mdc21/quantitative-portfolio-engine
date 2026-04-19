@@ -106,6 +106,15 @@ try:
     # This ensures we don't accidentally buy a low-quality stock just because it has high momentum.
     buy_list_prices = prices[[t for t in investable_tickers if t in prices.columns]]
     
+    if buy_list_prices.empty:
+        if scoring_df.empty or investable_tickers == []:
+            st.warning("⚠️ **Strategy Gap:** No stocks passed the current Institutional Quality criteria.")
+            st.info("💡 **Resolution:** Try moving the **Fundamental Quality Cutoff (%)** slider to a higher value to broaden the screening funnel.")
+        else:
+            st.error("⚠️ **Data Connectivity Issue:** Stocks passed the quality check, but no historical price data was found.")
+            st.info("💡 **Resolution:** The system is currently operating in network-restricted mode. Check `logs/quant_system.log` to confirm if Simulation Mode is active.")
+        st.stop()
+
     scores = compute_factor_scores(buy_list_prices, {
         "momentum_lookback_days": mom_lookback,
         "volatility_lookback_days": vol_lookback
@@ -125,14 +134,24 @@ try:
     selected_raw = select_top_momentum(scores, top_percent=top_pct_filter)
     selected = apply_sector_caps(selected_raw, sector_map, max_per_sector=3)
 
+    # 🛡️ Holding Protection: Force-include user-held stocks that passed fundamentals
+    # Prevents "Strategic Exit" recommendations on blue-chips purely due to weak 
+    # synthetic momentum data. Only protects stocks that cleared the quality audit.
+    protected_count = 0
+    for ot in owner_tickers:
+        if ot in investable_tickers and ot not in selected:
+            selected.append(ot)
+            protected_count += 1
+            logger.info(f"[HoldingProtection] Force-included {ot} (fundamentally qualified, user-held)")
+    if protected_count > 0:
+        logger.info(f"[HoldingProtection] Protected {protected_count} user-held blue-chips from synthetic momentum dropout")
+
     if not selected:
         logger.warning("Momentum Engine returned exactly 0 assets after constraint trimming.")
         st.error("No stocks met the criteria to proceed to Portfolio Allocation.")
         st.stop()
 
-    # Optimize
-    logger.info(f"Optimizing via {regime['optimization_mode']} Allocations...")
-    
+    # --- PORTFOLIO OPTIMIZATION ---
     limits = {
         "cap_large": cap_large,
         "cap_mid": cap_mid,
@@ -148,8 +167,15 @@ try:
             "Others": 0.10
         }
     }
-    
-    raw_weights = optimize_weights(buy_list_prices, selected, regime, sector_map, cap_map, limits)
+
+    try:
+        with st.spinner(f"⚖️ Optimization Stage 2: {regime['optimization_mode']} Allocations..."):
+            raw_weights = optimize_weights(buy_list_prices, selected, regime, sector_map, cap_map, limits)
+    except Exception as opt_err:
+        logger.error(f"Optimization Failure: {opt_err}", exc_info=True)
+        st.error(f"⚠️ **Portfolio Optimization Fault:** The {regime['optimization_mode']} solver encountered a mathematical singularity or timeout with {len(selected)} assets.")
+        st.info("💡 **Resolution:** Try reducing the **Fundamental Quality Cutoff** or **Momentum Retention** to decrease universe complexity.")
+        st.stop()
     
     # Run the safety nets to force overflow into CASH (Critical for HRP which lacks native bounds)
     raw_weights = apply_sector_weight_constraints(raw_weights, sector_map, regime)

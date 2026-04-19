@@ -1,6 +1,6 @@
-Ticker,Qty_LongTerm,Qty_ShortTerm
-RELIANCE,50,0
-tcs,0,15
- I T C ,100,50
-HDFCBANK.NS,200,0
-ZOMATO,0,200
+Ticker,Qty_LongTerm,Qty_ShortTerm,avg_buy_price
+RELIANCE,50,0,1200
+tcs,0,15,1800
+ I T C ,100,50,300
+HDFCBANK.NS,200,0,700
+ZOMATO,0,200,200

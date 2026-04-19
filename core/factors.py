@@ -1,10 +1,14 @@
 import numpy as np
+import pandas as pd
 
 def compute_momentum(prices, lookback=90):
     """
     Computes a blended multi-timeframe momentum to reduce signal churn.
     Blends: 30-day (20%), 90-day (50%), 180-day (30%)
     """
+    if prices.empty:
+        return pd.Series(dtype=float)
+        
     mom_30 = prices.pct_change(30).iloc[-1].rank(pct=True)
     mom_90 = prices.pct_change(90).iloc[-1].rank(pct=True)
     mom_180 = prices.pct_change(180).iloc[-1].rank(pct=True)
@@ -17,9 +21,14 @@ def compute_momentum(prices, lookback=90):
     return blended_mom
 
 def compute_volatility(prices, lookback=60):
+    if prices.empty:
+        return pd.Series(dtype=float)
     return prices.pct_change().rolling(lookback).std().iloc[-1]
 
 def compute_factor_scores(prices, config):
+    if prices.empty:
+        return pd.Series(dtype=float)
+        
     # mom is already ranked natively in the new blended function
     mom_rank = compute_momentum(prices, config.get("momentum_lookback_days", 90))
     vol = compute_volatility(prices, config.get("volatility_lookback_days", 60))

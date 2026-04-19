@@ -18,8 +18,20 @@ def _optimize_hrp(prices, selected_stocks):
     Builds a tree of correlations and allocates inversely proportional to cluster variance.
     Completely ignores expected returns, focusing purely on avoiding correlated crashes.
     """
-    returns = prices[selected_stocks].pct_change().dropna()
+    if len(selected_stocks) <= 1:
+        return {s: 1.0 for s in selected_stocks} if selected_stocks else {}
+    returns = prices[selected_stocks].pct_change().dropna(how='all')
+    if returns.empty:
+        return {s: 1.0/len(selected_stocks) for s in selected_stocks}
+        
+    # Clean data to avoid LinAlgError (NaN/Inf)
+    returns = returns.replace([np.inf, -np.inf], np.nan).fillna(0)
+    
     cov, corr = returns.cov(), returns.corr()
+    
+    # Final guard: if correlation is entirely NaN (all constant prices), return equal weights
+    if corr.isna().all().all():
+        return {s: 1.0/len(selected_stocks) for s in selected_stocks}
     
     # Distance matrix
     dist = np.sqrt(0.5 * (1 - corr).clip(0, 2))  
