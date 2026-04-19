@@ -109,7 +109,7 @@ def generate_trade_list(target_weights, holdings_list, live_prices, fresh_capita
             'Is_Confident': is_confident
         }
 
-    # Extract single exact series if live_prices is a DataFrame (Yahoo multi-ticker download issue)
+    # Extract single exact series if live_prices is a DataFrame
     latest_prices = live_prices.iloc[-1] if isinstance(live_prices, pd.DataFrame) else live_prices
 
     # Evaluate target allocations
@@ -119,7 +119,7 @@ def generate_trade_list(target_weights, holdings_list, live_prices, fresh_capita
             continue
             
         evaluated_tickers.add(ticker)
-        current_data = current_map.get(ticker, {'Qty': 0.0, 'Qty_ShortTerm': 0.0, 'Qty_LongTerm': 0.0, 'Avg_Buy_Price': 0.0})
+        current_data = current_map.get(ticker, {'Qty': 0.0, 'Qty_ShortTerm': 0.0, 'Qty_LongTerm': 0.0, 'Avg_Buy_Price': 0.0, 'Is_Confident': True})
         current_qty = current_data['Qty']
         
         # Extract scalar price
@@ -138,28 +138,21 @@ def generate_trade_list(target_weights, holdings_list, live_prices, fresh_capita
             continue
             
         target_value = total_capital * target_weight
-        target_qty = math.floor(target_value / price) # Always floor to prevent over-allocation of capital
+        target_qty = math.floor(target_value / price)
         
         delta_qty = target_qty - current_qty
         
         if delta_qty != 0:
             action = "BUY" if delta_qty > 0 else "SELL"
             
-            # 1. Tax Calculation For Sells
             tax_label = ""
             if action == "SELL":
                 if current_data['Avg_Buy_Price'] > 0:
-                    _, tax_label = calculate_likely_tax(
-                        price, 
-                        current_data['Avg_Buy_Price'], 
-                        abs(delta_qty), 
-                        current_data['Qty_LongTerm'], 
-                        current_data['Qty_ShortTerm']
-                    )
+                    _, tax_label = calculate_likely_tax(price, current_data['Avg_Buy_Price'], abs(delta_qty), current_data['Qty_LongTerm'], current_data['Qty_ShortTerm'])
                 else:
                     tax_label = "⚠️ No Buy Price"
             
-            # 2. Tactical Execution Audit
+            # Tactical Audit
             audit = tactical_audits.get(ticker, {})
             mode = audit.get("Execution", "Bulk")
             note = audit.get("Note", "")
@@ -170,12 +163,12 @@ def generate_trade_list(target_weights, holdings_list, live_prices, fresh_capita
                 group_label = "Buy Orders"
                 exec_label = f"{grade}"
             else:
-                # Use a small epsilon (0.01%) to determine if this is a strategic exit or a partial trim
                 group_label = "Strategic Exits" if target_weight < 0.0001 else "Rebalance Trims"
                 exec_label = f"Tactical {mode}" if mode == "Staggered" else "Bulk Order"
             
             trades.append({
                 "Stock": ticker,
+                "ISIN": current_data.get('Original_ISIN', ''),
                 "Action": action_label,
                 "Group": group_label,
                 "Shares": abs(int(delta_qty)),
@@ -183,6 +176,7 @@ def generate_trade_list(target_weights, holdings_list, live_prices, fresh_capita
                 "Est. Value": round(abs(delta_qty) * price, 2),
                 "Execution": exec_label,
                 "Tactical Note": note,
+                "Target Weight": f"{target_weight * 100:.2f}%",
                 "Tax Indicator": tax_label
             })
             
@@ -192,41 +186,66 @@ def generate_trade_list(target_weights, holdings_list, live_prices, fresh_capita
             continue
             
         current_qty = data['Qty']
-        if current_qty > 0:
-            price = 0.0
-            try:
-                raw_p = latest_prices.get(ticker, 0.0)
-                if hasattr(raw_p, 'iloc'):
-                     price = float(raw_p.iloc[0])
-                else:
-                     price = float(raw_p)
-                if math.isnan(price): price = 0.0
-            except:
-                pass
-            
-            # Tax calculation
-            tax_label = ""
-            if data['Avg_Buy_Price'] > 0:
-                _, tax_label = calculate_likely_tax(price, data['Avg_Buy_Price'], current_qty, data['Qty_LongTerm'], data['Qty_ShortTerm'])
+        if current_qty <= 0:
+            continue
+
+        price = 0.0
+        try:
+            raw_p = latest_prices.get(ticker, 0.0)
+            if hasattr(raw_p, 'iloc'):
+                 price = float(raw_p.iloc[0])
             else:
-                tax_label = "⚠️ No Buy Price"
-                
-            # Tactical Audit for full exit
-            audit = tactical_audits.get(ticker, {})
-            mode = audit.get("Execution", "Bulk")
-            note = audit.get("Note", "")
+                 price = float(raw_p)
+            if math.isnan(price): price = 0.0
+        except:
+            pass
+
+        # Handle Unresolved tickers separately (Action: N/A)
+        if not data.get('Is_Confident', True):
+            tax_l = ""
+            if data['Avg_Buy_Price'] > 0:
+                _, tax_l = calculate_likely_tax(price, data['Avg_Buy_Price'], current_qty, data['Qty_LongTerm'], data['Qty_ShortTerm'])
             
+            display_name = data.get('Original_Ticker', ticker)
             trades.append({
-                "Stock": ticker,
-                "Action": "🔴 SELL",
-                "Group": "Strategic Exits",
+                "Stock": display_name,
+                "ISIN": data.get('Original_ISIN', ''),
+                "Action": "⚪ N/A",
+                "Group": "Unresolved Assets",
                 "Shares": int(current_qty),
                 "Current Price": round(price, 2),
                 "Est. Value": round(current_qty * price, 2),
-                "Execution": f"Tactical {mode}" if mode == "Staggered" else "Bulk Order",
-                "Tactical Note": note,
-                "Tax Indicator": tax_label
+                "Execution": "Review Required",
+                "Tactical Note": "Ticker failed confident resolution. Manual mapping needed.",
+                "Target Weight": "Unknown",
+                "Tax Indicator": tax_l
             })
+            continue
+
+        # Tax calculation for strategic exits
+        tax_label = ""
+        if data['Avg_Buy_Price'] > 0:
+            _, tax_label = calculate_likely_tax(price, data['Avg_Buy_Price'], current_qty, data['Qty_LongTerm'], data['Qty_ShortTerm'])
+        else:
+            tax_label = "⚠️ No Buy Price"
+            
+        audit = tactical_audits.get(ticker, {})
+        mode = audit.get("Execution", "Bulk")
+        note = audit.get("Note", "")
+        
+        trades.append({
+            "Stock": ticker,
+            "ISIN": data.get('Original_ISIN', ''),
+            "Action": "🔴 SELL",
+            "Group": "Strategic Exits",
+            "Shares": int(current_qty),
+            "Current Price": round(price, 2),
+            "Est. Value": round(current_qty * price, 2),
+            "Execution": f"Tactical {mode}" if mode == "Staggered" else "Bulk Order",
+            "Tactical Note": note,
+            "Target Weight": "0.00%",
+            "Tax Indicator": tax_label
+        })
 
     df_trades = pd.DataFrame(trades)
     if not df_trades.empty:
