@@ -165,13 +165,17 @@ try:
 
     # 🛡️ Holding Protection: Force-include user-held stocks that passed fundamentals
     # Prevents "Strategic Exit" recommendations on blue-chips purely due to weak 
-    # synthetic momentum data. Only protects stocks that cleared the quality audit.
+    # synthetic momentum data. Only protects stocks that cleared the quality audit
+    # AND have price data available (prevents KeyError in optimizer).
     protected_count = 0
+    price_columns = set(buy_list_prices.columns)
     for ot in owner_tickers:
-        if ot in investable_tickers and ot not in selected:
+        if ot in investable_tickers and ot not in selected and ot in price_columns:
             selected.append(ot)
             protected_count += 1
-            logger.info(f"[HoldingProtection] Force-included {ot} (fundamentally qualified, user-held)")
+            logger.info(f"[HoldingProtection] Force-included {ot} (fundamentally qualified, user-held, price available)")
+        elif ot in investable_tickers and ot not in selected:
+            logger.warning(f"[HoldingProtection] Cannot protect {ot} — no price data available")
     if protected_count > 0:
         logger.info(f"[HoldingProtection] Protected {protected_count} user-held blue-chips from synthetic momentum dropout")
 
