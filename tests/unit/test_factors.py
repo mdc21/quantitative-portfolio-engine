@@ -13,11 +13,15 @@ def test_compute_factor_scores(mock_prices):
     
     scores = compute_factor_scores(prices, config)
     
-    assert isinstance(scores, pd.Series)
+    assert isinstance(scores, pd.DataFrame)
     assert not scores.empty
-    assert all(scores >= 0)
-    assert all(scores <= 1.0)
-    # Ensure all stocks have a score
+    assert "Composite_Score" in scores.columns
+    assert "Momentum_Rank" in scores.columns
+    assert "Stability_Rank" in scores.columns
+    
+    assert all(scores["Composite_Score"] >= 0)
+    assert all(scores["Composite_Score"] <= 1.0)
+    # Ensure all stocks have a result
     assert set(scores.index) == set(prices.columns)
 
 def test_compute_factor_scores_zero_momentum(mock_prices):
@@ -35,4 +39,4 @@ def test_compute_factor_scores_zero_momentum(mock_prices):
     scores = compute_factor_scores(prices, config)
     
     # Scores should be low or uniform
-    assert scores.std() < 0.001 or scores.isnull().all()
+    assert scores["Composite_Score"].std() < 0.001 or scores["Composite_Score"].isnull().all()

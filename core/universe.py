@@ -100,31 +100,36 @@ def _evaluate_fundamentals(item):
         roa = info.get("returnOnAssets", 0.01) or 0.01
         nim = info.get("operatingMargins", 0.0) if sector == "Financial Services" else 0.0
         npa = 0.015 # Global baseline unless specific data source found
+
+        # High-Fidelity Valuation anchors for Live Path
+        forward_pe = info.get("forwardPE", pe_ratio) or pe_ratio
+        median_pe = pe_ratio # Default to current unless we fetch history
+        median_pb = pb_ratio
         
     except Exception:
         # 🛡️ Simulation Mode: Curated profiles for blue-chips, realistic randoms for rest
         # This prevents TCS/HDFCBANK/RELIANCE from getting absurd scores due to hash luck
         CURATED_PROFILES = {
-            "RELIANCE.NS":   {"roe": 0.12, "pg": 0.18, "sg": 0.22, "de": 40,  "opm": 0.15, "peg": 1.3, "pe": 28, "pb": 2.5, "ph": 0.50, "ocf": 1.1, "sector": "Energy"},
-            "TCS.NS":        {"roe": 0.45, "pg": 0.12, "sg": 0.15, "de": 5,   "opm": 0.25, "peg": 2.5, "pe": 30, "pb": 14,  "ph": 0.72, "ocf": 1.2, "sector": "Technology"},
-            "HDFCBANK.NS":   {"roe": 0.16, "pg": 0.20, "sg": 0.18, "de": 80,  "opm": 0.35, "peg": 1.5, "pe": 20, "pb": 3.0, "ph": 0.26, "ocf": 0.9, "sector": "Financial Services", "roa": 0.021, "nim": 0.044, "npa": 0.012},
-            "ICICIBANK.NS":  {"roe": 0.17, "pg": 0.25, "sg": 0.20, "de": 85,  "opm": 0.32, "peg": 1.4, "pe": 18, "pb": 3.2, "ph": 0.00, "ocf": 0.8, "sector": "Financial Services", "roa": 0.022, "nim": 0.045, "npa": 0.015},
-            "INFY.NS":       {"roe": 0.32, "pg": 0.10, "sg": 0.12, "de": 10,  "opm": 0.22, "peg": 2.2, "pe": 27, "pb": 8.5, "ph": 0.31, "ocf": 1.1, "sector": "Technology"},
-            "SBIN.NS":       {"roe": 0.18, "pg": 0.30, "sg": 0.15, "de": 90,  "opm": 0.25, "peg": 0.8, "pe": 10, "pb": 1.8, "ph": 0.57, "ocf": 0.7, "sector": "Financial Services", "roa": 0.011, "nim": 0.038, "npa": 0.025},
-            "BHARTIARTL.NS": {"roe": 0.18, "pg": 0.35, "sg": 0.18, "de": 120, "opm": 0.38, "peg": 1.8, "pe": 35, "pb": 7.0, "ph": 0.55, "ocf": 1.0, "sector": "Technology"},
-            "ITC.NS":        {"roe": 0.28, "pg": 0.10, "sg": 0.08, "de": 0,   "opm": 0.35, "peg": 2.0, "pe": 25, "pb": 7.5, "ph": 0.00, "ocf": 1.3, "sector": "Consumer"},
-            "LT.NS":         {"roe": 0.15, "pg": 0.15, "sg": 0.20, "de": 70,  "opm": 0.12, "peg": 1.6, "pe": 32, "pb": 5.0, "ph": 0.00, "ocf": 0.9, "sector": "Industrials"},
-            "BAJFINANCE.NS": {"roe": 0.22, "pg": 0.28, "sg": 0.25, "de": 140, "opm": 0.40, "peg": 1.5, "pe": 35, "pb": 7.0, "ph": 0.56, "ocf": 0.6, "sector": "Financial Services", "roa": 0.045, "nim": 0.10,  "npa": 0.008},
-            "HINDUNILVR.NS": {"roe": 0.60, "pg": 0.08, "sg": 0.05, "de": 0,   "opm": 0.23, "peg": 3.5, "pe": 55, "pb": 10,  "ph": 0.62, "ocf": 1.2, "sector": "Consumer"},
-            "KOTAKBANK.NS":  {"roe": 0.14, "pg": 0.18, "sg": 0.15, "de": 75,  "opm": 0.30, "peg": 2.0, "pe": 22, "pb": 3.5, "ph": 0.26, "ocf": 0.8, "sector": "Financial Services", "roa": 0.024, "nim": 0.048, "npa": 0.011},
-            "SUNPHARMA.NS":  {"roe": 0.16, "pg": 0.20, "sg": 0.12, "de": 15,  "opm": 0.28, "peg": 1.2, "pe": 35, "pb": 5.0, "ph": 0.54, "ocf": 1.0, "sector": "Healthcare"},
-            "MARUTI.NS":     {"roe": 0.15, "pg": 0.22, "sg": 0.15, "de": 0,   "opm": 0.12, "peg": 1.5, "pe": 30, "pb": 5.5, "ph": 0.56, "ocf": 1.1, "sector": "Consumer"},
-            "TATAMOTORS.NS": {"roe": 0.12, "pg": 0.40, "sg": 0.25, "de": 90,  "opm": 0.10, "peg": 0.7, "pe": 8,  "pb": 2.0, "ph": 0.46, "ocf": 0.9, "sector": "Consumer"},
-            "TITAN.NS":      {"roe": 0.30, "pg": 0.22, "sg": 0.20, "de": 30,  "opm": 0.12, "peg": 2.8, "pe": 65, "pb": 17,  "ph": 0.53, "ocf": 0.8, "sector": "Consumer"},
-            "WIPRO.NS":      {"roe": 0.16, "pg": 0.05, "sg": 0.04, "de": 25,  "opm": 0.17, "peg": 2.5, "pe": 22, "pb": 3.5, "ph": 0.73, "ocf": 1.1, "sector": "Technology"},
-            "HCLTECH.NS":    {"roe": 0.24, "pg": 0.12, "sg": 0.13, "de": 10,  "opm": 0.20, "peg": 2.0, "pe": 25, "pb": 6.0, "ph": 0.60, "ocf": 1.2, "sector": "Technology"},
-            "AXISBANK.NS":   {"roe": 0.17, "pg": 0.22, "sg": 0.18, "de": 85,  "opm": 0.30, "peg": 1.2, "pe": 14, "pb": 2.3, "ph": 0.08, "ocf": 0.7, "sector": "Financial Services", "roa": 0.018, "nim": 0.040, "npa": 0.018},
-            "ASIANPAINT.NS": {"roe": 0.28, "pg": 0.10, "sg": 0.08, "de": 30,  "opm": 0.18, "peg": 3.0, "pe": 55, "pb": 14,  "ph": 0.53, "ocf": 1.0, "sector": "Consumer"},
+            "RELIANCE.NS":   {"roe": 0.12, "pg": 0.18, "sg": 0.22, "de": 40,  "opm": 0.15, "peg": 1.3, "pe": 28, "fpe": 26, "pb": 2.5, "ph": 0.50, "ocf": 1.1, "sector": "Energy", "median_pe": 22, "median_pb": 2.1},
+            "TCS.NS":        {"roe": 0.45, "pg": 0.12, "sg": 0.15, "de": 5,   "opm": 0.25, "peg": 2.5, "pe": 30, "fpe": 28, "pb": 14,  "ph": 0.72, "ocf": 1.2, "sector": "Technology", "median_pe": 25, "median_pb": 12},
+            "HDFCBANK.NS":   {"roe": 0.16, "pg": 0.20, "sg": 0.18, "de": 80,  "opm": 0.35, "peg": 1.5, "pe": 20, "fpe": 18, "pb": 3.0, "ph": 0.26, "ocf": 0.9, "sector": "Financial Services", "roa": 0.021, "nim": 0.044, "npa": 0.012, "median_pe": 24, "median_pb": 3.8},
+            "ICICIBANK.NS":  {"roe": 0.17, "pg": 0.25, "sg": 0.20, "de": 85,  "opm": 0.32, "peg": 1.4, "pe": 18, "fpe": 16, "pb": 3.2, "ph": 0.00, "ocf": 0.8, "sector": "Financial Services", "roa": 0.022, "nim": 0.045, "npa": 0.015, "median_pe": 22, "median_pb": 2.8},
+            "INFY.NS":       {"roe": 0.32, "pg": 0.10, "sg": 0.12, "de": 10,  "opm": 0.22, "peg": 2.2, "pe": 27, "fpe": 24, "pb": 8.5,  "ph": 0.31, "ocf": 1.1, "sector": "Technology", "median_pe": 22, "median_pb": 7.5},
+            "SBIN.NS":       {"roe": 0.18, "pg": 0.30, "sg": 0.15, "de": 90,  "opm": 0.25, "peg": 0.8, "pe": 10, "fpe": 9,  "pb": 1.8, "ph": 0.57, "ocf": 0.7, "sector": "Financial Services", "roa": 0.011, "nim": 0.038, "npa": 0.025, "median_pe": 12, "median_pb": 1.4},
+            "BHARTIARTL.NS": {"roe": 0.18, "pg": 0.35, "sg": 0.18, "de": 120, "opm": 0.38, "peg": 1.8, "pe": 35, "fpe": 32, "pb": 7.0, "ph": 0.55, "ocf": 1.0, "sector": "Technology", "median_pe": 30, "median_pb": 5.5},
+            "ITC.NS":        {"roe": 0.28, "pg": 0.10, "sg": 0.08, "de": 0,   "opm": 0.35, "peg": 2.0, "pe": 25, "fpe": 23,  "pb": 7.5, "ph": 0.00, "ocf": 1.3, "sector": "Consumer", "median_pe": 22, "median_pb": 6.5},
+            "LT.NS":         {"roe": 0.15, "pg": 0.15, "sg": 0.20, "de": 70,  "opm": 0.12, "peg": 1.6, "pe": 32, "fpe": 30, "pb": 5.0, "ph": 0.00, "ocf": 0.9, "sector": "Industrials", "median_pe": 25, "median_pb": 4.2},
+            "BAJFINANCE.NS": {"roe": 0.22, "pg": 0.28, "sg": 0.25, "de": 140, "opm": 0.40, "peg": 1.5, "pe": 35, "fpe": 30, "pb": 7.0, "ph": 0.56, "ocf": 0.6, "sector": "Financial Services", "roa": 0.045, "nim": 0.10,  "npa": 0.008, "median_pe": 45, "median_pb": 8.5},
+            "HINDUNILVR.NS": {"roe": 0.60, "pg": 0.08, "sg": 0.05, "de": 0,   "opm": 0.23, "peg": 3.5, "pe": 55, "fpe": 52, "pb": 10,  "ph": 0.62, "ocf": 1.2, "sector": "Consumer", "median_pe": 60, "median_pb": 12},
+            "KOTAKBANK.NS":  {"roe": 0.14, "pg": 0.18, "sg": 0.15, "de": 75,  "opm": 0.30, "peg": 2.0, "pe": 22, "fpe": 20, "pb": 3.5, "ph": 0.26, "ocf": 0.8, "sector": "Financial Services", "roa": 0.024, "nim": 0.048, "npa": 0.011, "median_pe": 28, "median_pb": 4.2},
+            "SUNPHARMA.NS":  {"roe": 0.16, "pg": 0.20, "sg": 0.12, "de": 15,  "opm": 0.28, "peg": 1.2, "pe": 35, "fpe": 32, "pb": 5.0, "ph": 0.54, "ocf": 1.0, "sector": "Healthcare", "median_pe": 30, "median_pb": 4.5},
+            "MARUTI.NS":     {"roe": 0.15, "pg": 0.22, "sg": 0.15, "de": 0,   "opm": 0.12, "peg": 1.5, "pe": 30, "fpe": 28, "pb": 5.5, "ph": 0.56, "ocf": 1.1, "sector": "Consumer", "median_pe": 25, "median_pb": 4.8},
+            "TATAMOTORS.NS": {"roe": 0.12, "pg": 0.40, "sg": 0.25, "de": 90,  "opm": 0.10, "peg": 0.7, "pe": 8,  "fpe": 7, "pb": 2.0, "ph": 0.46, "ocf": 0.9, "sector": "Consumer", "median_pe": 15, "median_pb": 1.8},
+            "TITAN.NS":      {"roe": 0.30, "pg": 0.22, "sg": 0.20, "de": 30,  "opm": 0.12, "peg": 2.8, "pe": 65, "fpe": 55, "pb": 17,  "ph": 0.53, "ocf": 0.8, "sector": "Consumer", "median_pe": 70, "median_pb": 22},
+            "WIPRO.NS":      {"roe": 0.16, "pg": 0.05, "sg": 0.04, "de": 25,  "opm": 0.17, "peg": 2.5, "pe": 22, "fpe": 20, "pb": 3.5, "ph": 0.73, "ocf": 1.1, "sector": "Technology", "median_pe": 18, "median_pb": 3.2},
+            "HCLTECH.NS":    {"roe": 0.24, "pg": 0.12, "sg": 0.13, "de": 10,  "opm": 0.20, "peg": 2.0, "pe": 25, "fpe": 22, "pb": 6.0, "ph": 0.60, "ocf": 1.2, "sector": "Technology", "median_pe": 20, "median_pb": 4.8},
+            "AXISBANK.NS":   {"roe": 0.17, "pg": 0.22, "sg": 0.18, "de": 85,  "opm": 0.30, "peg": 1.2, "pe": 14, "fpe": 12, "pb": 2.3, "ph": 0.08, "ocf": 0.7, "sector": "Financial Services", "roa": 0.018, "nim": 0.040, "npa": 0.018, "median_pe": 18, "median_pb": 2.2},
+            "ASIANPAINT.NS": {"roe": 0.28, "pg": 0.10, "sg": 0.08, "de": 30,  "opm": 0.18, "peg": 3.0, "pe": 55, "fpe": 50, "pb": 14,  "ph": 0.53, "ocf": 1.0, "sector": "Consumer", "median_pe": 65, "median_pb": 16},
         }
         
         profile = CURATED_PROFILES.get(ticker)
@@ -137,7 +142,14 @@ def _evaluate_fundamentals(item):
             opm = profile["opm"]
             peg = profile["peg"]
             pe_ratio = profile["pe"]
+            forward_pe = profile.get("fpe", pe_ratio)
             pb_ratio = profile["pb"]
+            median_pe = profile.get("median_pe", pe_ratio)
+            median_pb = profile.get("median_pb", pb_ratio)
+            sector = profile["sector"]
+            roa = profile.get("roa", 0.01)
+            nim = profile.get("nim", 0.0)
+            npa = profile.get("npa", 0.015)
             promoter_hold = profile["ph"]
             ocf_ni_ratio = profile["ocf"]
             sector = profile["sector"]
@@ -166,6 +178,11 @@ def _evaluate_fundamentals(item):
             roa = random.uniform(0.005, 0.025) if sector == "Financial Services" else 0.0
             nim = random.uniform(0.02, 0.05) if sector == "Financial Services" else 0.0
             npa = random.uniform(0.005, 0.05) if sector == "Financial Services" else 0.0
+
+            # Forward Anchors
+            forward_pe = pe_ratio * random.uniform(0.8, 1.2)
+            median_pe = pe_ratio * random.uniform(0.9, 1.1)
+            median_pb = pb_ratio * random.uniform(0.9, 1.1)
         
         market_cap = 1e12 if size == "Large" else (5e11 if size == "Mid" else 1e11)
         
@@ -183,7 +200,10 @@ def _evaluate_fundamentals(item):
         "DebtEquity": debt_to_equity,
         "MarketCap": market_cap,
         "PE": pe_ratio,
+        "ForwardPE": forward_pe,
         "PB": pb_ratio,
+        "MedianPE": median_pe,
+        "MedianPB": median_pb,
         "OPM": opm,
         "PEG": peg,
         "PromoterHold": promoter_hold,
@@ -210,35 +230,79 @@ def apply_fundamental_filters(universe_dict, top_percentile=0.3):
         logger.warning(f"[Screener] Critical Failure: Fundamental matrix is empty for {len(universe_dict)} stocks.")
         return [], {}, {}, df
 
+    # 📌 Expert Valuation Logic: Tiered PEG & P/B audit
+    def calculate_valuation_score(row):
+        sector = row["Sector"]
+        rg = row["SalesGrowth"]
+        
+        if sector == "Financial Services":
+            # For Banks, P/B is the source of truth. Mean P/B across high-quality banks ~2.5
+            curr_pb = row["PB"]
+            med_pb = row["MedianPB"]
+            
+            # Penalty check: If P/B is 2x historical median, it's a bubble
+            if curr_pb > (med_pb * 2.0): return 0.0
+            
+            # PB score: Lower is better (inverted benchmark)
+            q_val = max(0, 1 - (curr_pb / 5.0)) # 5.0 is extreme top of cycle
+            return q_val
+            
+        # Non-Financials: Revenue PEG logic
+        fpe = row["ForwardPE"]
+        rev_growth = max(rg, 0.01) # Floor at 1% for math
+        rev_peg = fpe / (rev_growth * 100)
+        
+        # Tiered Scoring: Expert discipline
+        if rev_peg < 1.0: return 1.0     # Deep Value Growth
+        if rev_peg < 1.8: return 0.7     # Fair Value
+        if rev_peg > 2.5: return 0.0     # Overvalued
+        return 0.3 # Between 1.8 and 2.5
+
+    def apply_valuation_guardrails(final_score, row):
+        # Bubble Penalty: Forward PE > 3x historical mean
+        if row["ForwardPE"] > (row["MedianPE"] * 3.0):
+            logger.warning(f"⚠️ Guardrail Triggered: {row['Stock']} is in bubble territory (PE > 3x Median). Applying penalty.")
+            return final_score * 0.80 # -20% flat penalty
+            
+        # PEG Penalty: If Revenue PEG is > 3.0 (Extreme bubble)
+        rev_peg = row["ForwardPE"] / (max(row["SalesGrowth"], 0.01) * 100)
+        if rev_peg > 3.0:
+            logger.warning(f"⚠️ Guardrail Triggered: {row['Stock']} PEG {rev_peg:.2f} too high. Applying penalty.")
+            return final_score * 0.80
+            
+        return final_score
+
     # 📌 Specialized Adaptive Scoring Engine
     def calculate_adaptive_score(row):
         sector = row["Sector"]
         
-        # Financials (Banks & NBFCs): Focus on ROA, NIM, and Asset Quality
+        # Base Quality Score
         if sector == "Financial Services":
-            q_roa = min(max(row["ROA"], 0) / 0.018, 1.2) # Target 1.8%+ ROA
-            q_nim = min(max(row["NIM"], 0) / 0.04, 1.2)  # Target 4.0%+ NIM
-            q_npa = max(0, 1 - (row["NPA"] / 0.05))      # Penalty for NPA > 5%
-            return 0.40 * q_roa + 0.40 * q_nim + 0.20 * q_npa
-            
-        # Industrials & Energy: Focus on ROCE and Debt Efficiency
-        if sector in ["Industrials", "Energy"]:
+            q_roa = min(max(row["ROA"], 0) / 0.018, 1.2)
+            q_nim = min(max(row["NIM"], 0) / 0.04, 1.2)
+            q_npa = max(0, 1 - (row["NPA"] / 0.05))
+            q_quality = (0.40 * q_roa + 0.40 * q_nim + 0.20 * q_npa)
+        elif sector in ["Industrials", "Energy"]:
             q_ce = min(max(row["ROCE"], 0) / 0.18, 1.0)
             q_debt = max(0, 1 - (min(row["DebtEquity"], 150) / 100))
-            return 0.50 * q_ce + 0.50 * q_debt
-            
-        # IT & FMCG: Focus on Margins and Growth
-        if sector in ["Technology", "Consumer"]:
+            q_quality = (0.50 * q_ce + 0.50 * q_debt)
+        elif sector in ["Technology", "Consumer"]:
             q_margin = min(max(row["OPM"], 0) / 0.22, 1.0)
             q_growth = min(max(row["ProfitGrowth"], 0) / 0.18, 1.0)
             q_cash = min(max(row["OCF_NI_Ratio"], 0) / 0.8, 1.0)
-            return 0.40 * q_margin + 0.30 * q_growth + 0.30 * q_cash
-            
-        # General Fallback (Healthcare, Utilities, etc.)
-        q_roce = min(max(row["ROCE"], 0) / 0.15, 1.0)
-        q_growth = min(max(row["ProfitGrowth"], 0) / 0.12, 1.0)
-        q_debt = max(0, 1 - (min(row["DebtEquity"], 150) / 100))
-        return 0.40 * q_roce + 0.30 * q_growth + 0.30 * q_debt
+            q_quality = (0.40 * q_margin + 0.30 * q_growth + 0.30 * q_cash)
+        else:
+            q_roce = min(max(row["ROCE"], 0) / 0.15, 1.0)
+            q_growth = min(max(row["ProfitGrowth"], 0) / 0.12, 1.0)
+            q_debt = max(0, 1 - (min(row["DebtEquity"], 150) / 100))
+            q_quality = (0.40 * q_roce + 0.30 * q_growth + 0.30 * q_debt)
+
+        # Baseline Valuation Component (25% Weight)
+        q_val = calculate_valuation_score(row)
+        
+        # Aggregate and Apply Expert Guardrail Penalty
+        total_score = (0.75 * q_quality) + (0.25 * q_val)
+        return apply_valuation_guardrails(total_score, row)
 
     df["Fundamental_Score"] = df.apply(calculate_adaptive_score, axis=1)
 

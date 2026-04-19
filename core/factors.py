@@ -27,7 +27,7 @@ def compute_volatility(prices, lookback=60):
 
 def compute_factor_scores(prices, config):
     if prices.empty:
-        return pd.Series(dtype=float)
+        return pd.DataFrame()
         
     # mom is already ranked natively in the new blended function
     mom_rank = compute_momentum(prices, config.get("momentum_lookback_days", 90))
@@ -37,6 +37,16 @@ def compute_factor_scores(prices, config):
     vol_rank = vol.rank(pct=True)
 
     # Composite score: high momentum, low volatility (Normalized 0-1)
+    # We use (1 - vol_rank) because we want low volatility for high quality
     score = (mom_rank + (1 - vol_rank)) / 2
 
-    return score.sort_values(ascending=False)
+    # Assemble Detailed DataFrame
+    results = pd.DataFrame({
+        "Stock": mom_rank.index,
+        "Momentum_Rank": mom_rank.values,
+        "Vol_Rank": vol_rank.values,
+        "Stability_Rank": (1 - vol_rank.values),
+        "Composite_Score": score.values
+    }).set_index("Stock")
+
+    return results.sort_values(by="Composite_Score", ascending=False)

@@ -58,6 +58,10 @@ try:
     # --- SIDEBAR & INTERACTIVITY ---
     st.sidebar.title("⚙️ Strategy Parameters")
     
+    if st.sidebar.button("🗑️ Clear Analytics Cache"):
+        st.cache_data.clear()
+        st.rerun()
+    
     st.sidebar.header("Strategy Tuning")
     fund_cutoff = st.sidebar.slider("Fundamental Quality Cutoff (%)", 0.1, 1.0, 0.3, help="Controls the percentage of the universe that passes the initial quality audit (ROCE, Cash Quality, Promoter Skin).")
     mom_lookback = st.sidebar.slider("Momentum Lookback (Days)", 30, 252, 90, help="Number of trading days to track for historical price momentum. Usually 90-180 days.")
@@ -67,13 +71,13 @@ try:
 
     # --- UNIVERSE DISCOVERY ---
     @st.cache_data(ttl=86400)
-    def get_investable_universe(top_pct):
-        logger.info(f"Triggered Universe Cache Refresh with Cutoff: {top_pct}")
+    def get_institutional_universe(top_pct):
+        logger.info(f"Triggered Institutional Universe Cache Refresh with Cutoff: {top_pct}")
         broad_universe = fetch_broad_universe("nifty50")
         return apply_fundamental_filters(broad_universe, top_percentile=top_pct)
 
     with st.spinner("🤖 Evaluating Fundamental Screener (Daily Cache)..."):
-        investable_tickers, sector_map, cap_map, scoring_df = get_investable_universe(fund_cutoff)
+        investable_tickers, sector_map, cap_map, scoring_df = get_institutional_universe(fund_cutoff)
         all_assessed_tickers = scoring_df["Stock"].tolist() if not scoring_df.empty else investable_tickers
 
     # Fetch - Expand fetch to include user's owner tickers for comparison chart
@@ -540,18 +544,72 @@ try:
         if not st.session_state['is_allocated']:
             st.info("🔥 Waiting for Strategy Allocation...")
         else:
-            st.subheader("Momentum vs Risk Ranking")
-            st.markdown("Visualizing the final composite momentum factor structure.")
-        
-        df_scores = scores.reset_index()
-        df_scores.columns = ["Stock", "Composite Score"]
-        df_scores["Composite Score"] = df_scores["Composite Score"] * 100
-        
-        fig3 = px.bar(df_scores, x="Stock", y="Composite Score", color="Composite Score", 
-                      color_continuous_scale="Viridis", text="Composite Score")
-        fig3.update_traces(texttemplate='%{text:.2f}', textposition='outside')
-        fig3.update_layout(xaxis_tickangle=-45)
-        st.plotly_chart(fig3, width='stretch')
+            st.subheader("Factor Quadrant Analysis: Momentum vs. Stability")
+            st.markdown("Visualizing the 'Golden Zone'—where winning performance meets institutional-grade stability.")
+            
+            # Prepare data for 2D scatter
+            df_plot = scores.reset_index()
+            
+            # Defensive Check: ensure new columns exist (handles stale cache)
+            if "Momentum_Rank" not in df_plot.columns:
+                st.warning("🔄 **Factor Data Refresh Required:** The dashboard is using a cached version of the previous factor engine. Please change any strategy parameter (like Lookback) to force a refresh of the 2D Quadrant view.")
+                st.stop()
+            
+            # Add Quadrant Labels
+            def get_quadrant(row):
+                m = row.get("Momentum_Rank", 0)
+                s = row.get("Stability_Rank", 0)
+                if m >= 0.5 and s >= 0.5: return "Golden Zone"
+                if m >= 0.5 and s < 0.5: return "Speculative"
+                if m < 0.5 and s >= 0.5: return "Laggards"
+                return "Risk Trap"
+            
+            df_plot["Quadrant"] = df_plot.apply(get_quadrant, axis=1)
+            df_plot["Composite (%)"] = (df_plot["Composite_Score"] * 100).round(2)
+            
+            fig3 = px.scatter(
+                df_plot, 
+                x="Momentum_Rank", 
+                y="Stability_Rank",
+                color="Composite_Score",
+                size="Composite_Score",
+                hover_name="Stock",
+                color_continuous_scale="Viridis",
+                labels={"Momentum_Rank": "Momentum Strength (Percentile)", "Stability_Rank": "Trend Stability (1 - Volatility)"},
+                range_x=[0, 1.05],
+                range_y=[0, 1.05],
+                category_orders={"Quadrant": ["Golden Zone", "Speculative", "Laggards", "Risk Trap"]}
+            )
+            
+            # High-Fidelity Quadrant Lines
+            fig3.add_hline(y=0.5, line_dash="dot", line_color="rgba(255,255,255,0.3)")
+            fig3.add_vline(x=0.5, line_dash="dot", line_color="rgba(255,255,255,0.3)")
+            
+            # Quadrant Annotations
+            annotations = [
+                dict(x=0.75, y=0.95, text="GOLDEN ZONE (High Moat)", showarrow=False, font=dict(color="#10b981", size=14)),
+                dict(x=0.75, y=0.05, text="SPECULATIVE (High Vol)", showarrow=False, font=dict(color="#fbbf24", size=14)),
+                dict(x=0.25, y=0.95, text="LAGGARDS (Flat line)", showarrow=False, font=dict(color="#94a3b8", size=14)),
+                dict(x=0.25, y=0.05, text="RISK TRAP (Avoid)", showarrow=False, font=dict(color="#ef4444", size=14))
+            ]
+            for annot in annotations:
+                fig3.add_annotation(annot)
+
+            fig3.update_layout(
+                coloraxis_showscale=False,
+                margin=dict(t=30, b=30, l=30, r=30),
+                height=500
+            )
+            
+            st.plotly_chart(fig3, use_container_width=True)
+            
+            with st.expander("💡 How to read this chart?"):
+                st.markdown("""
+                - **Top Right (Golden Zone)**: Stocks with powerful uptrends and low volatility. Institutions love these.
+                - **Bottom Right (Speculative)**: High octane momentum but extremely 'noisy'. High chance of sudden reversals.
+                - **Top Left (Laggards)**: Stable but no growth. Good for capital preservation, poor for alpha.
+                - **Bottom Left (Risk Trap)**: Low momentum and high volatility. These are usually structural wealth destroyers.
+                """)
 
     with tab4:
         if not st.session_state['is_allocated']:
@@ -567,11 +625,17 @@ try:
             display_df["ROCE"] = display_df["ROCE"] * 100
             display_df["ProfitGrowth"] = display_df["ProfitGrowth"] * 100
             display_df["SalesGrowth"] = display_df["SalesGrowth"] * 100
+            # Specialized adaptive metrics (Defensive for cache transitions)
+            for col in ["ROA", "NIM", "ForwardPE", "PB"]:
+                if col not in display_df.columns:
+                    display_df[col] = 0.0
+            
             display_df["ROA"] = display_df["ROA"] * 100
             display_df["NIM"] = display_df["NIM"] * 100
+            display_df["Rev PEG"] = display_df["ForwardPE"] / (display_df["SalesGrowth"].replace(0, 0.01) * 100)
             
-            # Select key columns including specialized adaptive metrics
-            display_df = display_df[["Stock", "Size", "Sector", "Score", "ROCE", "ROA", "NIM", "ProfitGrowth", "SalesGrowth", "DebtEquity"]]
+            # Select key columns including specialized adaptive and valuation metrics
+            display_df = display_df[["Stock", "Size", "Sector", "Score", "ROCE", "ROA", "Rev PEG", "ForwardPE", "PB", "SalesGrowth", "DebtEquity"]]
             
             st.dataframe(
                 display_df, 
@@ -580,8 +644,9 @@ try:
                     "Score": st.column_config.NumberColumn("Score", format="%.2f"),
                     "ROCE": st.column_config.NumberColumn("ROCE", format="%.2f%%"),
                     "ROA": st.column_config.NumberColumn("ROA", format="%.2f%%"),
-                    "NIM": st.column_config.NumberColumn("NIM", format="%.2f%%"),
-                    "ProfitGrowth": st.column_config.NumberColumn("Profit Gr.", format="%.2f%%"),
+                    "Rev PEG": st.column_config.NumberColumn("Rev PEG", format="%.2f"),
+                    "ForwardPE": st.column_config.NumberColumn("Fwd PE", format="%.1f"),
+                    "PB": st.column_config.NumberColumn("P/B", format="%.2f"),
                     "SalesGrowth": st.column_config.NumberColumn("Sales Gr.", format="%.2f%%"),
                     "DebtEquity": st.column_config.NumberColumn("D/E", format="%.2f")
                 }

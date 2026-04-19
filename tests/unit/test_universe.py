@@ -24,9 +24,13 @@ def test_apply_fundamental_filters(mocker, mock_fundamental_data):
     
     # Check results
     assert len(tickers) == 2
-    assert "TCS.NS" in tickers  # TCS should have high ROCE (0.35)
-    assert sector_map["TCS.NS"] == "Technology"
-    assert cap_map["TCS.NS"] == "Large"
+    # TCS is now penalized due to PEG > 2.5 (3.75 in mock data), so it falls out of top 2
+    assert "HDFCBANK.NS" in tickers  # HDFCBANK has elite quality + attractive P/B
+    assert "INFY.NS" in tickers      # INFY has better PEG than TCS in mock
+    assert "TCS.NS" not in tickers   # ⚠️ Successfully filtered due to high Valuation PEG (3.75)
+    
+    assert sector_map["HDFCBANK.NS"] == "Financial Services"
+    assert cap_map["HDFCBANK.NS"] == "Large"
     assert not df.empty
     assert "Fundamental_Score" in df.columns
 
