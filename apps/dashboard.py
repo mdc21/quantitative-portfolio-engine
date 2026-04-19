@@ -211,6 +211,34 @@ try:
     raw_weights = apply_cap_size_constraints(raw_weights, cap_map, cap_large, cap_mid, cap_small)
     raw_weights = apply_macro_overlay(raw_weights, regime)
 
+    # 🛡️ Weight Floor for Protected Holdings
+    # Force-included stocks often get near-zero weights from the optimizer because
+    # their synthetic momentum is weak. This makes the trade engine sell ALL shares.
+    # Fix: guarantee protected stocks get at least equal-weight allocation.
+    if protected_count > 0:
+        protected_tickers = [ot for ot in owner_tickers if ot in investable_tickers and ot in raw_weights]
+        if protected_tickers:
+            n_stocks = len([s for s, w in raw_weights.items() if w > 0.0001 and s != "CASH"])
+            min_weight = max(1.0 / max(n_stocks, 1), 0.01)  # At least equal-weight, min 1%
+            
+            deficit = 0.0
+            for pt in protected_tickers:
+                current_w = raw_weights.get(pt, 0)
+                if current_w < min_weight:
+                    deficit += (min_weight - current_w)
+                    raw_weights[pt] = min_weight
+                    logger.info(f"[HoldingProtection] Raised {pt} weight from {current_w:.4f} to {min_weight:.4f}")
+            
+            # Redistribute deficit proportionally from non-protected, non-CASH stocks
+            if deficit > 0:
+                non_protected = {s: w for s, w in raw_weights.items() 
+                                if s not in protected_tickers and s != "CASH" and w > 0.001}
+                total_non_prot = sum(non_protected.values())
+                if total_non_prot > 0:
+                    for s in non_protected:
+                        raw_weights[s] -= deficit * (non_protected[s] / total_non_prot)
+                        raw_weights[s] = max(raw_weights[s], 0)  # Floor at 0
+
     # Apply Churn Control
     old_state = load_portfolio_state()
     # Forcibly purge legacy Index bugs from yesterday's JSON
