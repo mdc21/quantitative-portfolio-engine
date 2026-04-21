@@ -14,6 +14,9 @@ session.headers.update({
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 })
 
+from core.screener_api import ScreenerAPI
+screener_client = ScreenerAPI()
+
 # Hardcoded Fallback Arrays
 FALLBACK_LARGE = [
     "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "ICICIBANK.NS", "BHARTIARTL.NS", "SBIN.NS", 
@@ -120,8 +123,31 @@ def _evaluate_fundamentals(item):
         median_pe = pe_ratio # Default to current unless we fetch history
         median_pb = pb_ratio
         
-    except Exception:
-        # 🛡️ Simulation Mode: Curated profiles for blue-chips, realistic randoms for rest
+    except Exception as yf_error:
+        # Secondary Fallback: Screener.in
+        screener_data = screener_client.fetch_fundamentals(ticker)
+        if screener_data:
+            data_source = screener_data.get("data_source", "Screener.in (Fallback)")
+            roe = screener_data.get("roce", 0.10) # Using ROCE as ROE proxy if missing
+            profit_growth = 0.10 # Screener doesn't easily expose this on front page cleanly
+            sales_growth = 0.10
+            debt_to_equity = screener_data.get("debt_equity", 50)
+            market_cap = screener_data.get("market_cap", 0)
+            pe_ratio = screener_data.get("pe", 20.0)
+            pb_ratio = screener_data.get("pb", 3.0)
+            opm = 0.15
+            peg = 2.0
+            promoter_hold = 0.5
+            ocf_ni_ratio = 1.0
+            sector = "Unknown_Sector"
+            roa = screener_data.get("roce", 0.05) / 2 # Loose proxy
+            nim = 0.0
+            npa = 0.015
+            forward_pe = pe_ratio
+            median_pe = pe_ratio
+            median_pb = pb_ratio
+        else:
+            # 🛡️ Tertiary Fallback: Curated profiles for blue-chips, realistic randoms for rest
         # This prevents TCS/HDFCBANK/RELIANCE from getting absurd scores due to hash luck
         CURATED_PROFILES = {
             "RELIANCE.NS":   {"roe": 0.12, "pg": 0.18, "sg": 0.22, "de": 40,  "opm": 0.15, "peg": 1.3, "pe": 28, "fpe": 26, "pb": 2.5, "ph": 0.50, "ocf": 1.1, "sector": "Energy", "median_pe": 22, "median_pb": 2.1},

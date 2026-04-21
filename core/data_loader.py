@@ -2,6 +2,7 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 from curl_cffi import requests
+from core.nse_api import NSEAPI
 
 # Global session to mimic browser and bypass Yahoo Finance 401/Invalid Crumb errors
 # Hardened with secondary headers to avoid bot detection
@@ -72,7 +73,26 @@ def fetch_prices(tickers, period="6mo"):
                 logger.warning(f"Live market data fetch failed: {e}.")
                 break
         
-    # 🛡️ Robust Fallback: Generate Synthetic Simulation Data if download returned empty
+    # Secondary Fallback: NSE India API
+    if data.empty:
+        logger.warning("⚠️ Yahoo Finance failed completely. Falling back to official NSE API for historical data...")
+        nse_client = NSEAPI()
+        
+        nse_data_frames = {}
+        for ticker in fetch_list:
+            if ticker == "^NSEI": continue # Skip index for now, complex NSE mapping
+            
+            series = nse_client.fetch_historical_prices(ticker, months_back=6)
+            if not series.empty:
+                nse_data_frames[ticker] = series
+                
+        if nse_data_frames:
+            data = pd.DataFrame(nse_data_frames)
+            data = data.ffill().bfill()
+            data.attrs["data_source"] = "NSE India API (Fallback)"
+            return data
+
+    # 🛡️ Tertiary Fallback: Generate Synthetic Simulation Data if download returned empty
     if data.empty:
         logger.error("❌ Live market data sources exhausted or blocked. Falling back to Synthetic Simulation.")
         return _generate_synthetic_prices(fetch_list)
