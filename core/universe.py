@@ -5,7 +5,14 @@ from concurrent.futures import ThreadPoolExecutor
 from core.logger import logger
 
 # Global session to mimic browser and bypass Yahoo Finance 401/Invalid Crumb errors
-session = requests.Session(impersonate="chrome110")
+session = requests.Session(impersonate="chrome120")
+session.headers.update({
+    "Accept": "*/*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Origin": "https://finance.yahoo.com",
+    "Referer": "https://finance.yahoo.com",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+})
 
 # Hardcoded Fallback Arrays
 FALLBACK_LARGE = [
@@ -61,8 +68,15 @@ def _evaluate_fundamentals(item):
     """
     ticker, size = item
     data_source = "Live"  # Track where this stock's data came from
+    
+    # Add randomized jitter to avoid 'Burst' detection by Yahoo's anti-bot system
+    import time
+    import random
+    time.sleep(random.uniform(1.0, 3.0))
+    
     try:
-        info = yf.Ticker(ticker, session=session).info
+        ticker_obj = yf.Ticker(ticker, session=session)
+        info = ticker_obj.info
         if not info:
              raise ValueError("Empty Info")
         
@@ -219,7 +233,7 @@ def apply_fundamental_filters(universe_dict, top_percentile=0.3):
     raw_data = []
     items = list(universe_dict.items())
     
-    with ThreadPoolExecutor(max_workers=10) as executor:
+    with ThreadPoolExecutor(max_workers=5) as executor:
         # Safely exhaust the iterator to prevent NameErrors in workers or incomplete data
         results = list(executor.map(_evaluate_fundamentals, items))
         

@@ -4,19 +4,25 @@ import numpy as np
 from curl_cffi import requests
 
 # Global session to mimic browser and bypass Yahoo Finance 401/Invalid Crumb errors
-# This is critical for cloud environments like Streamlit Cloud
-session = requests.Session(impersonate="chrome110")
+# Hardened with secondary headers to avoid bot detection
+session = requests.Session(impersonate="chrome120")
+session.headers.update({
+    "Accept": "*/*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Origin": "https://finance.yahoo.com",
+    "Referer": "https://finance.yahoo.com",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+})
 
-def _is_network_available(timeout=3):
+def _is_network_available(timeout=5):
     """
-    Fast-fail connectivity probe. Returns True only if Yahoo Finance 
-    responds within `timeout` seconds. Prevents 130-ticker download 
-    from hanging for 30+ minutes in restricted environments.
+    Fast-fail connectivity probe using the hardened browser session.
+    Returns True only if Yahoo Finance responds within `timeout` seconds.
     """
     try:
-        import urllib.request
-        urllib.request.urlopen("https://query1.finance.yahoo.com", timeout=timeout)
-        return True
+        # Use our hardened session for the probe to avoid bot-blocked ping failures
+        response = session.get("https://query1.finance.yahoo.com", timeout=timeout)
+        return response.status_code == 200
     except Exception:
         return False
 
@@ -37,6 +43,9 @@ def _generate_synthetic_prices(fetch_list):
 
 def fetch_prices(tickers, period="6mo"):
     from core.logger import logger
+    import time
+    import random
+    
     fetch_list = list(tickers)
     if "^NSEI" not in fetch_list:
         fetch_list.append("^NSEI")
@@ -47,15 +56,25 @@ def fetch_prices(tickers, period="6mo"):
         return _generate_synthetic_prices(fetch_list)
     
     data = pd.DataFrame()
-    try:
-        data = yf.download(fetch_list, period=period, interval="1d", session=session, progress=False)["Close"]
-        data = data.dropna(axis=1, how='all')
-        data = data.ffill().bfill()
-    except Exception as e:
-        logger.warning(f"Live market data fetch failed: {e}. Falling back to synthetic simulation data.")
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            data = yf.download(fetch_list, period=period, interval="1d", session=session, progress=False)["Close"]
+            if not data.empty:
+                break
+            logger.warning(f"Attempt {attempt+1}: Download returned empty data. Retrying...")
+        except Exception as e:
+            if "401" in str(e) or "Unauthorized" in str(e):
+                wait_time = (2 ** attempt) + random.uniform(0.1, 1.0)
+                logger.warning(f"⚠️ 401 Unauthorized detected. Backing off for {wait_time:.2f}s (Attempt {attempt+1}/{max_retries})")
+                time.sleep(wait_time)
+            else:
+                logger.warning(f"Live market data fetch failed: {e}.")
+                break
         
     # 🛡️ Robust Fallback: Generate Synthetic Simulation Data if download returned empty
     if data.empty:
+        logger.error("❌ Live market data sources exhausted or blocked. Falling back to Synthetic Simulation.")
         return _generate_synthetic_prices(fetch_list)
     
     data.attrs["data_source"] = "Yahoo Finance (Live)"

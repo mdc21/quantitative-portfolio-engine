@@ -12,7 +12,14 @@ from core.momentum import select_top_momentum, apply_sector_caps
 from core.optimizer import optimize_weights
 
 # Global session to mimic browser and bypass Yahoo Finance 401/Invalid Crumb errors
-session = requests.Session(impersonate="chrome110")
+session = requests.Session(impersonate="chrome120")
+session.headers.update({
+    "Accept": "*/*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Origin": "https://finance.yahoo.com",
+    "Referer": "https://finance.yahoo.com",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+})
 
 print("Initiating 10-Year Walk-Forward Backtester...")
 print("⚠️ Note: Subject to Survivorship Bias. Point-in-time fundamentals unavailable.\n")
