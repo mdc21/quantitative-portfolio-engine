@@ -21,7 +21,7 @@ screener_client = ScreenerAPI()
 FALLBACK_LARGE = [
     "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "ICICIBANK.NS", "BHARTIARTL.NS", "SBIN.NS", 
     "INFY.NS", "LT.NS", "ITC.NS", "BAJFINANCE.NS", "HINDUNILVR.NS", "KOTAKBANK.NS",
-    "AXISBANK.NS", "MARUTI.NS", "SUNPHARMA.NS", "ASIANPAINT.NS", "TATAMOTORS.NS", 
+    "AXISBANK.NS", "MARUTI.NS", "SUNPHARMA.NS", "ASIANPAINT.NS", "TMPV.NS", 
     "ULTRACEMCO.NS", "TATASTEEL.NS", "POWERGRID.NS", "NTPC.NS", "TITAN.NS",
     "ONGC.NS", "JSWSTEEL.NS", "HCLTECH.NS", "WIPRO.NS", "BAJAJFINSV.NS", "ADANIPORTS.NS",
     "ADANIENT.NS", "COALINDIA.NS", "HINDALCO.NS", "M&M.NS", "GRASIM.NS", "TECHM.NS",
@@ -31,7 +31,7 @@ FALLBACK_LARGE = [
 ]
 
 FALLBACK_MID = [
-    "HAL.NS", "LICI.NS", "JINDALSTEL.NS", "TVSMOTOR.NS", "PNB.NS", "TRENT.NS", "ZOMATO.NS",
+    "HAL.NS", "LICI.NS", "JINDALSTEL.NS", "TVSMOTOR.NS", "PNB.NS", "TRENT.NS", "ETERNAL.NS",
     "CGPOWER.NS", "BANKBARODA.NS", "CHOLAFIN.NS", "DLF.NS", "GAIL.NS", "VBL.NS", "INDIGO.NS",
     "AMBUJACEM.NS", "BOSCHLTD.NS", "HAVELLS.NS", "SIEMENS.NS", "IRFC.NS", "PFC.NS", "RECLTD.NS",
     "SHRIRAMFIN.NS", "GODREJCP.NS", "COLPAL.NS", "DABUR.NS", "PIDILITIND.NS", "ICICIPRULI.NS",
@@ -177,7 +177,7 @@ def _evaluate_fundamentals(item):
                 "KOTAKBANK.NS":  {"roe": 0.14, "pg": 0.18, "sg": 0.15, "de": 75,  "opm": 0.30, "peg": 2.0, "pe": 22, "fpe": 20, "pb": 3.5, "ph": 0.26, "ocf": 0.8, "sector": "Financial Services", "roa": 0.024, "nim": 0.048, "npa": 0.011, "median_pe": 28, "median_pb": 4.2},
                 "SUNPHARMA.NS":  {"roe": 0.16, "pg": 0.20, "sg": 0.12, "de": 15,  "opm": 0.28, "peg": 1.2, "pe": 35, "fpe": 32, "pb": 5.0, "ph": 0.54, "ocf": 1.0, "sector": "Healthcare", "median_pe": 30, "median_pb": 4.5},
                 "MARUTI.NS":     {"roe": 0.15, "pg": 0.22, "sg": 0.15, "de": 0,   "opm": 0.12, "peg": 1.5, "pe": 30, "fpe": 28, "pb": 5.5, "ph": 0.56, "ocf": 1.1, "sector": "Consumer", "median_pe": 25, "median_pb": 4.8},
-                "TATAMOTORS.NS": {"roe": 0.12, "pg": 0.40, "sg": 0.25, "de": 90,  "opm": 0.10, "peg": 0.7, "pe": 8,  "fpe": 7, "pb": 2.0, "ph": 0.46, "ocf": 0.9, "sector": "Consumer", "median_pe": 15, "median_pb": 1.8},
+                "TMPV.NS":       {"roe": 0.12, "pg": 0.40, "sg": 0.25, "de": 90,  "opm": 0.10, "peg": 0.7, "pe": 8,  "fpe": 7, "pb": 2.0, "ph": 0.46, "ocf": 0.9, "sector": "Consumer", "median_pe": 15, "median_pb": 1.8},
                 "TITAN.NS":      {"roe": 0.30, "pg": 0.22, "sg": 0.20, "de": 30,  "opm": 0.12, "peg": 2.8, "pe": 65, "fpe": 55, "pb": 17,  "ph": 0.53, "ocf": 0.8, "sector": "Consumer", "median_pe": 70, "median_pb": 22},
                 "WIPRO.NS":      {"roe": 0.16, "pg": 0.05, "sg": 0.04, "de": 25,  "opm": 0.17, "peg": 2.5, "pe": 22, "fpe": 20, "pb": 3.5, "ph": 0.73, "ocf": 1.1, "sector": "Technology", "median_pe": 18, "median_pb": 3.2},
                 "HCLTECH.NS":    {"roe": 0.24, "pg": 0.12, "sg": 0.13, "de": 10,  "opm": 0.20, "peg": 2.0, "pe": 25, "fpe": 22, "pb": 6.0, "ph": 0.60, "ocf": 1.2, "sector": "Technology", "median_pe": 20, "median_pb": 4.8},
