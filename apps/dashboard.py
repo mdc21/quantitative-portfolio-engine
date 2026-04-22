@@ -578,12 +578,15 @@ try:
             df_plot["Quadrant"] = df_plot.apply(get_quadrant, axis=1)
             df_plot["Composite (%)"] = (df_plot["Composite_Score"] * 100).round(2)
             
+            # 🛡️ Safety Check: Prevent Plotly from crashing on NaN or negative sizes
+            df_plot["Plot_Size"] = df_plot["Composite_Score"].fillna(0.01).clip(lower=0.01)
+            
             fig3 = px.scatter(
                 df_plot, 
                 x="Momentum_Rank", 
                 y="Stability_Rank",
                 color="Composite_Score",
-                size="Composite_Score",
+                size="Plot_Size",
                 hover_name="Stock",
                 color_continuous_scale="Viridis",
                 labels={"Momentum_Rank": "Momentum Strength (Percentile)", "Stability_Rank": "Trend Stability (1 - Volatility)"},

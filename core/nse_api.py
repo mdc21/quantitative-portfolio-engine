@@ -60,11 +60,11 @@ class NSEAPI:
                     series = df['ClosePrice'].sort_index()
                     return series
                 else:
-                    logger.debug(f"[NSELib] Unexpected columns returned for {clean_tick}: {df.columns}")
+                    logger.warning(f"[NSELib] Unexpected columns returned for {clean_tick}: {df.columns}")
             else:
-                logger.debug(f"[NSELib] Empty dataset returned for {clean_tick}.")
+                logger.warning(f"[NSELib] Empty dataset returned for {clean_tick}.")
                 
         except Exception as e:
-            logger.debug(f"[NSELib] Exception fetching {clean_tick}: {e}")
+            logger.warning(f"[NSELib] Exception fetching {clean_tick}: {e}")
             
         return pd.Series(dtype=float)

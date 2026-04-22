@@ -80,8 +80,18 @@ def _evaluate_fundamentals(item):
     try:
         ticker_obj = yf.Ticker(ticker, session=session)
         info = ticker_obj.info
-        if not info:
-             raise ValueError("Empty Info")
+        
+        # 🛡️ Deep validation: yfinance silently swallows network errors and returns
+        # a near-empty dict (e.g. {'trailingPegRatio': None}) instead of raising.
+        # We must verify that a MEANINGFUL metric actually came back.
+        has_real_data = info and (
+            info.get("regularMarketPrice") or 
+            info.get("marketCap") or 
+            info.get("returnOnEquity") is not None
+        )
+        if not has_real_data:
+            logger.warning(f"[Yahoo] {ticker}: returned empty/stub data. Triggering fallback.")
+            raise ValueError(f"Yahoo returned no meaningful data for {ticker}")
         
         # 1. Core Profitability
         roe = info.get("returnOnEquity")
@@ -125,8 +135,10 @@ def _evaluate_fundamentals(item):
         
     except Exception as yf_error:
         # Secondary Fallback: Screener.in
+        logger.warning(f"[Fallback] {ticker}: Yahoo failed ({yf_error}). Attempting Screener.in...")
         screener_data = screener_client.fetch_fundamentals(ticker)
         if screener_data:
+            logger.info(f"[Screener] ✅ {ticker}: Successfully extracted fundamentals from Screener.in")
             data_source = screener_data.get("data_source", "Screener.in (Fallback)")
             roe = screener_data.get("roce", 0.10) # Using ROCE as ROE proxy if missing
             profit_growth = 0.10 # Screener doesn't easily expose this on front page cleanly
@@ -148,6 +160,7 @@ def _evaluate_fundamentals(item):
             median_pb = pb_ratio
         else:
             # 🛡️ Tertiary Fallback: Curated profiles for blue-chips, realistic randoms for rest
+            logger.warning(f"[Fallback] {ticker}: Screener.in also failed. Using tertiary fallback.")
             # This prevents TCS/HDFCBANK/RELIANCE from getting absurd scores due to hash luck
             CURATED_PROFILES = {
                 "RELIANCE.NS":   {"roe": 0.12, "pg": 0.18, "sg": 0.22, "de": 40,  "opm": 0.15, "peg": 1.3, "pe": 28, "fpe": 26, "pb": 2.5, "ph": 0.50, "ocf": 1.1, "sector": "Energy", "median_pe": 22, "median_pb": 2.1},

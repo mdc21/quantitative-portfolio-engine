@@ -17,13 +17,14 @@ session.headers.update({
 
 def _is_network_available(timeout=5):
     """
-    Fast-fail connectivity probe using the hardened browser session.
+    Fast-fail connectivity probe using standard networking.
     Returns True only if Yahoo Finance responds within `timeout` seconds.
     """
     try:
-        # Use our hardened session for the probe to avoid bot-blocked ping failures
-        response = session.get("https://query1.finance.yahoo.com", timeout=timeout)
-        return response.status_code == 200
+        import urllib.request
+        req = urllib.request.Request("https://query1.finance.yahoo.com", headers={'User-Agent': 'Mozilla/5.0'})
+        urllib.request.urlopen(req, timeout=timeout)
+        return True
     except Exception:
         return False
 

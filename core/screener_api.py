@@ -86,6 +86,6 @@ class ScreenerAPI:
                         return metrics
                         
             except Exception as e:
-                logger.debug(f"[Screener] Error fetching {url}: {e}")
+                logger.warning(f"[Screener] Error fetching {url}: {e}")
                 
         return None
