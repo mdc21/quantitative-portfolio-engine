@@ -14,6 +14,7 @@ from core.macro import load_macro_data, compute_macro_regime
 from core.universe import fetch_broad_universe, apply_fundamental_filters
 from core.ticker_mapper import resolve_ticker
 from core.state import load_portfolio_state, save_portfolio_state
+from core.portfolio_parser import extract_portfolio_row, get_portfolio_summary
 from core.tactical import get_bulk_tactical_audit
 from core.logger import logger
 
@@ -395,34 +396,16 @@ try:
             from core.execution import calculate_portfolio_value
             from core.ticker_mapper import resolve_ticker
             
-            # 1. Map Existing Weights
-            existing_values = {}
-            total_existing_value = 0.0
-            latest_prices = prices.iloc[-1] if isinstance(prices, pd.DataFrame) else prices
+            # 1. Map Existing Weights using centralized parser
+            summary = get_portfolio_summary(st.session_state['holdings_list'], latest_prices)
+            existing_values = summary['values']
+            total_existing_value = summary['total_value']
+            existing_weights = summary['weights']
             
-            matched_count = 0
-            unmatched_tickers = []
-            for hl in st.session_state['holdings_list']:
-                cl = {str(k).strip().lower(): v for k, v in hl.items()}
-                rt = str(cl.get('stock_symbol', cl.get('ticker', ''))).strip().upper()
-                ri = str(cl.get('isin_name', cl.get('isin_code', ''))).strip().upper()
-                if rt:
-                    rest, _ = resolve_ticker(rt, isin=ri)
-                    if rest in prices.columns or rest == "CASH":
-                        qty = float(cl.get('qty_longterm', 0) or 0) + float(cl.get('qty_shortterm', 0) or 0)
-                        p = latest_prices[rest] if rest != "CASH" else 1.0
-                        val = qty * p
-                        existing_values[rest] = existing_values.get(rest, 0.0) + val
-                        total_existing_value += val
-                        matched_count += 1
-                    else:
-                        unmatched_tickers.append(f"{rt}→{rest}")
+            logger.info(f"[Portfolio] Mapped {summary['matched_count']}/{len(st.session_state['holdings_list'])} holdings. Total Value: ₹{total_existing_value:,.2f}. Unmatched: {len(summary['unmatched_tickers'])}")
             
-            logger.info(f"[Portfolio] Mapped {matched_count}/{len(st.session_state['holdings_list'])} holdings to price data. Unmatched: {len(unmatched_tickers)}")
-            if unmatched_tickers:
-                logger.warning(f"[Portfolio] Unmatched tickers (not in price columns): {unmatched_tickers[:15]}")
-            
-            existing_weights = {s: v / total_existing_value for s, v in existing_values.items()} if total_existing_value > 0 else {}
+            if summary['nan_price_tickers']:
+                st.warning(f"⚠️ **Price feed missing** for {len(summary['nan_price_tickers'])} holdings (e.g., {summary['nan_price_tickers'][:3]}). These are currently valued at ₹0.")
             
             # 2. Build Comparison DataFrame
             all_assets = sorted(list(set(list(weights.keys()) + list(existing_weights.keys()))))
@@ -431,7 +414,8 @@ try:
                 tw = weights.get(asset, 0.0)
                 ew = existing_weights.get(asset, 0.0)
                 
-                if tw > 0.0001 or ew > 0.0001:
+                # Use a small epsilon to avoid float rounding issues
+                if tw > 1e-6 or ew > 1e-6:
                     comparison_rows.append({
                         "Stock": asset,
                         "Sector": "Cash / Buffer" if asset == "CASH" else sector_map.get(asset, "Other"),
@@ -504,28 +488,17 @@ try:
             
             # --- OWNER PORTFOLIO CURVE CALCULATION ---
             owner_curve = None
-            if st.session_state['holdings_list']:
-                # Resolve weights based on current market value
-                owner_raw_values = {}
-                latest_p = prices.iloc[-1]
-                for hl in st.session_state['holdings_list']:
-                    cl = {str(k).strip().lower(): v for k, v in hl.items()}
-                    rt = str(cl.get('stock_symbol', cl.get('ticker', ''))).strip().upper()
-                    ri = str(cl.get('isin_name', cl.get('isin_code', ''))).strip().upper()
-                    if rt:
-                        rest, _ = resolve_ticker(rt, isin=ri)
-                        if rest in prices.columns:
-                            qty = float(cl.get('qty_longterm', 0) or 0) + float(cl.get('qty_shortterm', 0) or 0)
-                            price = latest_p[rest]
-                            owner_raw_values[rest] = owner_raw_values.get(rest, 0.0) + (qty * price)
-                
-                total_o_val = sum(owner_raw_values.values())
-                if total_o_val > 0:
-                    o_weights = {t: v / total_o_val for t, v in owner_raw_values.items()}
-                    # Filter returns to only those tickers we own
-                    o_tickers = list(o_weights.keys())
+            summary_curves = get_portfolio_summary(st.session_state['holdings_list'], prices)
+            o_weights = summary_curves['weights']
+            
+            if o_weights:
+                # Filter returns to only those tickers we own and have data for
+                o_tickers = [t for t in o_weights.keys() if t in all_returns.columns]
+                if o_tickers:
                     o_returns_df = all_returns[o_tickers]
-                    o_w_array = np.array([o_weights[t] for t in o_tickers])
+                    o_w_sum = sum(o_weights[t] for t in o_tickers)
+                    # Normalize weights to 1.0 for the owned subset to get a clean curve
+                    o_w_array = np.array([o_weights[t] / o_w_sum for t in o_tickers])
                     
                     o_port_returns = o_returns_df.dot(o_w_array)
                     owner_curve = 100 * (1 + o_port_returns).cumprod()

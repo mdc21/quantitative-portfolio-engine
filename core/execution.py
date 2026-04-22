@@ -2,48 +2,24 @@ import pandas as pd
 import math
 import logging
 from core.ticker_mapper import resolve_ticker
+from core.portfolio_parser import extract_portfolio_row
 from core.logger import logger
 
 def calculate_portfolio_value(holdings_list, live_prices, fresh_capital=0.0):
     """
     Calculates the total absolute value of the portfolio.
-    holdings_list is expected to be a list of dicts: [{'Ticker': 'TCS', 'Qty_LongTerm': 10, 'Qty_ShortTerm': 5}]
+    Uses centralized parser to handle mangled broker headers.
     """
     current_value = 0.0
+    latest_p = live_prices.iloc[-1] if isinstance(live_prices, pd.DataFrame) else live_prices
+    
     logger.info(f"Calculating portfolio value for {len(holdings_list)} holdings.")
     for hl in holdings_list:
-        # Robust dictionary key extraction (handles case & spaces)
-        clean_hl = {str(k).strip().lower(): v for k, v in hl.items()}
-        
-        raw_ticker = str(clean_hl.get('stock_symbol', clean_hl.get('ticker', ''))).strip().upper()
-        raw_isin = str(clean_hl.get('isin_name', clean_hl.get('isin_code', ''))).strip().upper()
-        if not raw_ticker:
+        data = extract_portfolio_row(hl, latest_p)
+        if not data:
             continue
             
-        ticker, is_confident = resolve_ticker(raw_ticker, isin=raw_isin)
-        logger.debug(f"[Calculations] Extracted: Ticker='{raw_ticker}', ISIN='{raw_isin}' -> Resolved: {ticker} (Confident: {is_confident})")
-            
-        qty = float(clean_hl.get('qty_longterm', 0) or 0) + float(clean_hl.get('qty_shortterm', 0) or 0)
-        
-        # Fallback if price is missing or ticker format is weird
-        price = 0.0
-        try:
-            raw_p = live_prices.get(ticker, 0.0) if hasattr(live_prices, 'get') else (live_prices.loc[ticker] if ticker in live_prices else 0.0)
-            if isinstance(raw_p, pd.Series):
-                 price = float(raw_p.iloc[0])
-            else:
-                 price = float(raw_p)
-            if math.isnan(price): price = 0.0
-            
-            if price > 0:
-                logger.debug(f"[Value] Price found for {ticker}: {price}")
-            else:
-                logger.warning(f"[Value] No price found for resolved ticker {ticker}")
-        except Exception as e:
-            logger.error(f"[Value] Error fetching price for {ticker}: {e}")
-            pass
-            
-        current_value += (float(qty) * price)
+        current_value += (data['qty'] * data['current_price'])
 
     return current_value + float(fresh_capital)
 
@@ -90,22 +66,28 @@ def generate_trade_list(target_weights, holdings_list, live_prices, fresh_capita
     
     current_map = {}
     logger.info("Building Trade List Map from current holdings...")
+    latest_p = live_prices.iloc[-1] if isinstance(live_prices, pd.DataFrame) else live_prices
+    
     for hl in holdings_list:
-        clean_hl = {str(k).strip().lower(): v for k, v in hl.items()}
-        raw_ticker = str(clean_hl.get('stock_symbol', clean_hl.get('ticker', ''))).strip().upper()
-        raw_isin = str(clean_hl.get('isin_name', clean_hl.get('isin_code', ''))).strip().upper()
-        if not raw_ticker: continue
-        
-        ticker, is_confident = resolve_ticker(raw_ticker, isin=raw_isin)
-        logger.info(f"[Trade.Gen] Extracted: Ticker='{raw_ticker}', ISIN='{raw_isin}' | Resolved -> {ticker} (Confident: {is_confident})")
+        data = extract_portfolio_row(hl, latest_p)
+        if not data:
+            continue
             
+        ticker = data['ticker']
+        # Extract is_confident for special reporting
+        _, is_confident = resolve_ticker(data['original_ticker']) 
+        
+        logger.info(f"[Trade.Gen] Resolved -> {ticker} (Confident: {is_confident})")
+            
+        # For tax calculations, we still need the LT/ST split if available
+        cl = {str(k).strip().lower(): v for k, v in hl.items()}
         current_map[ticker] = {
-            'Qty': float(clean_hl.get('qty_longterm', 0) or 0) + float(clean_hl.get('qty_shortterm', 0) or 0),
-            'Qty_LongTerm': float(clean_hl.get('qty_longterm', 0) or 0),
-            'Qty_ShortTerm': float(clean_hl.get('qty_shortterm', 0) or 0),
-            'Avg_Buy_Price': float(clean_hl.get('avg_buy_price', 0) or 0),
-            'Original_Ticker': raw_ticker,
-            'Original_ISIN': raw_isin,
+            'Qty': data['qty'],
+            'Qty_LongTerm': float(cl.get('qty_longterm', 0) or 0), # Fallbacks handled by extract_portfolio_row if needed
+            'Qty_ShortTerm': float(cl.get('qty_shortterm', 0) or 0),
+            'Avg_Buy_Price': data['avg_buy_price'],
+            'Original_Ticker': data['original_ticker'],
+            'Original_ISIN': cl.get('isin_name', cl.get('isin_code', '')),
             'Is_Confident': is_confident
         }
 
