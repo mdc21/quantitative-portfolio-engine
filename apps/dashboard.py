@@ -397,6 +397,7 @@ try:
             from core.ticker_mapper import resolve_ticker
             
             # 1. Map Existing Weights using centralized parser
+            latest_prices = prices.iloc[-1] if isinstance(prices, pd.DataFrame) else prices
             summary = get_portfolio_summary(st.session_state['holdings_list'], latest_prices)
             existing_values = summary['values']
             total_existing_value = summary['total_value']
