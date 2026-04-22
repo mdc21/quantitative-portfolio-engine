@@ -113,6 +113,14 @@ try:
         
         if live_count == total:
             st.sidebar.success(f"📡 **Fundamental Data:** Live ({total} stocks via Yahoo Finance)")
+        elif live_count > 0:
+            # Mostly live with a few fallbacks — this is normal operation
+            screener_count = (scoring_df["DataSource"] == "Screener.in (Fallback)").sum()
+            fallback_count = curated_count + synthetic_count + screener_count
+            st.sidebar.success(
+                f"📡 **Fundamental Data:** Live ({live_count}/{total} stocks via Yahoo Finance)\n\n"
+                f"*{fallback_count} stocks used fallback data (curated/screener/synthetic).*"
+            )
         elif curated_count > 0 or synthetic_count > 0:
             st.sidebar.warning(
                 f"⚠️ **Fundamental Data: Simulation Mode**\n\n"

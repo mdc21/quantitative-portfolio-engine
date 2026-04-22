@@ -17,14 +17,12 @@ session.headers.update({
 
 def _is_network_available(timeout=5):
     """
-    Fast-fail connectivity probe using standard networking.
-    Returns True only if Yahoo Finance responds within `timeout` seconds.
+    Fast-fail connectivity probe using the same curl_cffi session as yfinance.
+    This ensures consistency: if fundamentals can be fetched, prices can too.
     """
     try:
-        import urllib.request
-        req = urllib.request.Request("https://query1.finance.yahoo.com", headers={'User-Agent': 'Mozilla/5.0'})
-        urllib.request.urlopen(req, timeout=timeout)
-        return True
+        response = session.get("https://query1.finance.yahoo.com", timeout=timeout)
+        return response.status_code in [200, 301, 302, 403]  # Any response = network works
     except Exception:
         return False
 
