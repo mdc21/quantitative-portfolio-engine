@@ -50,10 +50,7 @@ def fetch_prices(tickers, period="6mo"):
     if "^NSEI" not in fetch_list:
         fetch_list.append("^NSEI")
     
-    # 🚀 Fast-fail: Check network BEFORE attempting a massive download
-    if not _is_network_available():
-        logger.warning("Network probe failed (3s timeout). Skipping yf.download entirely.")
-        return _generate_synthetic_prices(fetch_list)
+    logger.info(f"📡 Attempting live price download for {len(fetch_list)} tickers...")
     
     data = pd.DataFrame()
     max_retries = 3
