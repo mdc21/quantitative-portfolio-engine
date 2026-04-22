@@ -400,6 +400,8 @@ try:
             total_existing_value = 0.0
             latest_prices = prices.iloc[-1] if isinstance(prices, pd.DataFrame) else prices
             
+            matched_count = 0
+            unmatched_tickers = []
             for hl in st.session_state['holdings_list']:
                 cl = {str(k).strip().lower(): v for k, v in hl.items()}
                 rt = str(cl.get('stock_symbol', cl.get('ticker', ''))).strip().upper()
@@ -412,6 +414,13 @@ try:
                         val = qty * p
                         existing_values[rest] = existing_values.get(rest, 0.0) + val
                         total_existing_value += val
+                        matched_count += 1
+                    else:
+                        unmatched_tickers.append(f"{rt}→{rest}")
+            
+            logger.info(f"[Portfolio] Mapped {matched_count}/{len(st.session_state['holdings_list'])} holdings to price data. Unmatched: {len(unmatched_tickers)}")
+            if unmatched_tickers:
+                logger.warning(f"[Portfolio] Unmatched tickers (not in price columns): {unmatched_tickers[:15]}")
             
             existing_weights = {s: v / total_existing_value for s, v in existing_values.items()} if total_existing_value > 0 else {}
             
