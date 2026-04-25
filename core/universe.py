@@ -51,7 +51,9 @@ FALLBACK_SMALL = [
 
 FALLBACK_ETF = [
     "NIFTYBEES.NS", "BANKBEES.NS", "CPSEETF.NS", "MON100.NS", 
-    "GOLDBEES.NS", "SILVERBEES.NS", "LIQUIDBEES.NS", "ITBEES.NS"
+    "GOLDBEES.NS", "SILVERBEES.NS", "LIQUIDBEES.NS", "ITBEES.NS",
+    "PHARMABEES.NS", "AUTOBEES.NS", "MAFANG.NS", "JUNIORBEES.NS",
+    "MMLOWVOL.NS", "MASPTOP50.NS", "BHARATBOND25.NS", "ICICIGILT.NS"
 ]
 
 FALLBACK_MF = [
@@ -59,7 +61,21 @@ FALLBACK_MF = [
     "120828.AMFI", # Quant Active Fund
     "112248.AMFI", # Nippon India Small Cap
     "120586.AMFI", # SBI Contra Fund
-    "118989.AMFI"  # HDFC Mid-Cap Opportunities
+    "118989.AMFI", # HDFC Mid-Cap Opportunities
+    "120594.AMFI", # ICICI Pru Bluechip
+    "118834.AMFI", # Mirae Asset Large Cap
+    "148383.AMFI", # ICICI Nasdaq 100 Index
+    "135544.AMFI", # Tata Digital India
+    "101683.AMFI", # Nippon India Liquid
+    "118825.AMFI", # Kotak Flexi Cap
+    "151034.AMFI", # HDFC Mid-Cap Index
+    "150177.AMFI", # Navi Nasdaq 100
+    "140700.AMFI", # PGIM India Global Equity
+    "120588.AMFI", # SBI Liquid Direct Growth
+    "120592.AMFI", # HDFC Liquid Direct Growth
+    "120593.AMFI", # ICICI Pru Liquid Direct Growth
+    "120581.AMFI", # Nippon India Corporate Bond
+    "118776.AMFI"  # Axis Liquid Fund (Added for high liquidity)
 ]
 
 PASSIVE_METRICS = {
@@ -106,21 +122,29 @@ def fetch_broad_universe(source="multi_cap"):
         region = "Domestic"
         if "GOLD" in t or "SILVER" in t:
             underlying = "Metal"
-        elif "LIQUID" in t:
-            underlying = "Debt"
+        else:
+            debt_keywords = ["BOND", "GILT", "LIQUID", "101683", "120588", "120592", "120593", "120581", "118776"]
+            if any(kw in t for kw in debt_keywords):
+                underlying = "Debt"
             
-        if "MON100" in t:
+        # International Recognition
+        intl_keywords = ["MON100", "MAFANG", "148383", "150177", "140700"]
+        if any(kw in t for kw in intl_keywords):
             region = "International"
             
         # Map ETFs to specific sectors
-        if "ITBEES" in t:
+        if "ITBEES" in t or "135544" in t:
             sector = "Technology"
-        elif "BANKBEES" in t:
+        elif "BANKBEES" in t or "118825" in t:
             sector = "Financial Services"
+        elif "AUTOBEES" in t:
+            sector = "Automobile"
+        elif "PHARMABEES" in t:
+            sector = "Healthcare"
         elif "CPSE" in t:
             sector = "PSU_Utilities"
-        elif "MON100" in t:
-            sector = "Technology"
+        elif region == "International":
+            sector = "Global_Technology" if "FANG" in t or "Nasdaq" in t else "Global_Index"
         elif underlying == "Metal":
             sector = "Commodities"
         elif underlying == "Debt":
@@ -129,31 +153,9 @@ def fetch_broad_universe(source="multi_cap"):
             sector = "Index"
             
         universe_dict[t] = {
-            "Size": "Large", 
-            "AssetClass": "ETF", 
+            "Size": "Small" if "Small" in t or "112248" in t else ("Mid" if "Mid" in t or "118989" in t else "Large"), 
+            "AssetClass": "ETF" if ".NS" in t else "MutualFund", 
             "Underlying": underlying, 
-            "Region": region,
-            "TickerSector": sector
-        }
-        
-    for t in FALLBACK_MF:
-        region = "Domestic"
-        # Parag Parikh (122589) has international exposure, but for simplicity we tag as Domestic for now unless specified
-        if t == "122589.AMFI":
-             region = "Domestic" # 80:20 internal so we count as Domestic
-             
-        # Map MFs to specific sectors and caps
-        if "Small Cap" in t or "112248" in t:
-            sector, size = "Index", "Small"
-        elif "Mid-Cap" in t or "118989" in t:
-            sector, size = "Index", "Mid"
-        else:
-            sector, size = "Index", "Large"
-            
-        universe_dict[t] = {
-            "Size": size, 
-            "AssetClass": "MutualFund", 
-            "Underlying": "Equity", 
             "Region": region,
             "TickerSector": sector
         }

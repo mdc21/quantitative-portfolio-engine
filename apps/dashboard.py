@@ -473,13 +473,28 @@ try:
             with st.expander("💡 Explainability: How was this portfolio selected?"):
                 final_stock_count = len([s for s, w in weights.items() if w > 0.001 and s != "CASH"])
                 cash_w = weights.get("CASH", 0.0) * 100
+                
+                # Dynamic counts for clarity
+                equity_count = len([s for s in investable_tickers if asset_map.get(s) == "Equity"])
+                
+                # ETF funnel metrics
+                initial_passives = len([s for s in scoring_df['Stock'] if asset_map.get(s) != "Equity"])
+                qualified_passives = len([s for s in investable_tickers if asset_map.get(s) != "Equity"])
+                final_passive_count = len([s for s, w in weights.items() if w > 0.001 and asset_map.get(s) != "Equity"])
+                
                 st.markdown(f"""
-                **The quantitative engine acts as a ruthless filter, removing weak assets at every mathematical layer:**
-                - 🏢 **Starting Universe**: `{len(scoring_df)}` stocks analyzed for structural financial health.
-                - 🥇 **Fundamental Screen**: `{len(investable_tickers)}` stocks survived by ranking in the top tier for ROCE, Profit Growth, and low Debt.
-                - 📈 **Momentum Cutoff**: `{len(selected_raw)}` stocks retained for exhibiting confirming multi-timeframe price momentum.
-                - 🛡️ **Sector Caps**: Trimmed down to `{len(selected)}` finalists to prevent extreme cluster correlation.
-                - ⚖️ **Optimization ({regime['optimization_mode']})**: Finalized `{final_stock_count}` precise asset allocations. `{cash_w:.1f}%` of the portfolio was systematically routed to `CASH` to prevent breaching maximum mathematical limits.
+                **The Quantitative Engine enforces a strict Hierarchical Mandate to ensure institutional-grade stability:**
+
+                - 🏘️ **Direct Equity (60% Target)**: 
+                    - 🏢 **Universe**: `{len(scoring_df)}` stocks analyzed across the Multi-Cap universe.
+                    - 🥇 **Elite Selection**: `{equity_count}` high-fidelity stocks promoted via Quality & Momentum filters.
+                - 📦 **Passive Safety (40% Target)**:
+                    - 🕵️ **Analysis**: `{initial_passives}` schemes analyzed for expense ratios and tracking error.
+                    - ✅ **Qualification**: `{qualified_passives}` schemes survived the Morningstar-grade Quality hurdle (>0.5 score).
+                    - 🎯 **Final Mandate**: `{final_passive_count}` schemes precisely allocated to satisfy the **80:20 Domestic/International** split.
+                - ⚖️ **Engine ({regime['optimization_mode']} + HRP)**: 
+                    - Finalized `{final_stock_count}` precise asset allocations. 
+                    - `{cash_w:.1f}%` routed to **CASH** to prevent breaching maximum mathematical risk/sector limits.
                 """)
 
         if not st.session_state['is_allocated']:
