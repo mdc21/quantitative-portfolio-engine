@@ -9,7 +9,14 @@ import plotly.express as px
 from core.data_loader import fetch_prices
 from core.factors import compute_factor_scores
 from core.momentum import select_top_momentum, apply_sector_caps
-from core.optimizer import optimize_weights, apply_macro_overlay, apply_turnover_control, apply_sector_weight_constraints, apply_cap_size_constraints, apply_asset_class_constraints
+from core.optimizer import (
+    optimize_weights, 
+    apply_macro_overlay, 
+    apply_turnover_control, 
+    apply_sector_weight_constraints, 
+    apply_cap_size_constraints, 
+    apply_asset_class_constraints
+)
 from core.macro import load_macro_data, compute_macro_regime
 from core.universe import fetch_broad_universe, apply_fundamental_filters
 from core.ticker_mapper import resolve_ticker
