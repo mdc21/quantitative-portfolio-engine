@@ -36,7 +36,7 @@ def test_generate_trade_list_buy_and_sell(dummy_prices):
         "INFY.NS": 0.00
     }
     
-    df_trades = generate_trade_list(targets, holdings, dummy_prices, fresh_capital=0.0)
+    df_trades, skipped_report = generate_trade_list(targets, holdings, dummy_prices, fresh_capital=0.0)
     
     assert not df_trades.empty
     
@@ -78,7 +78,7 @@ def test_generate_trade_list_messy_csv_parsing(dummy_prices):
     val = calculate_portfolio_value(messy_holdings, dummy_prices)
     assert val == 60000.0, "Failed to parse messy formats into correct valuation"
     
-    df_trades = generate_trade_list(targets, messy_holdings, dummy_prices)
+    df_trades, skipped_report = generate_trade_list(targets, messy_holdings, dummy_prices)
     
     # Since they perfectly match, there should be no trades needed!
     assert df_trades.empty, "Generated dummy trades when perfect alignment existed"
@@ -96,7 +96,7 @@ def test_generate_trade_list_unresolved_ticker(dummy_prices):
         "RELIANCE.NS": 1.0
     }
     
-    df_trades = generate_trade_list(targets, messy_holdings, dummy_prices, fresh_capital=10000.0)
+    df_trades, skipped_report = generate_trade_list(targets, messy_holdings, dummy_prices, fresh_capital=10000.0)
     
     # We expect a row for the obscure broker name
     assert not df_trades.empty
@@ -120,7 +120,7 @@ def test_generate_trade_list_empty_holdings(dummy_prices):
     # RELIANCE: 50000 / 2000 = 25 shares.
     # TCS: 50000 / 3000 = 16.66 -> 16 shares.
     
-    df_trades = generate_trade_list(targets, empty_holdings, dummy_prices, fresh_capital=100000.0)
+    df_trades, skipped_report = generate_trade_list(targets, empty_holdings, dummy_prices, fresh_capital=100000.0)
     
     assert len(df_trades) == 2
     assert all(df_trades["Action"] == "🟢 BUY")
@@ -152,7 +152,7 @@ def test_generate_trade_list_grouping_logic(dummy_prices):
         "TCS.NS": 0.90
     }
     
-    df_trades = generate_trade_list(targets, holdings, dummy_prices)
+    df_trades, skipped_report = generate_trade_list(targets, holdings, dummy_prices)
     
     # RELIANCE should be a "Rebalance Trim" as target weight is > 0.01%
     rel_trade = df_trades[df_trades["Stock"] == "RELIANCE.NS"].iloc[0]
@@ -186,7 +186,7 @@ def test_generate_trade_list_tax_calculation(dummy_prices):
     # Target: 0%. Full Exit.
     targets = {} 
     
-    df_trades = generate_trade_list(targets, holdings, dummy_prices)
+    df_trades, skipped_report = generate_trade_list(targets, holdings, dummy_prices)
     
     assert not df_trades.empty
     trade = df_trades.iloc[0]
@@ -209,7 +209,7 @@ def test_generate_trade_list_tax_loss_harvesting(dummy_prices):
     ]
     
     targets = {}
-    df_trades = generate_trade_list(targets, holdings, dummy_prices)
+    df_trades, skipped_report = generate_trade_list(targets, holdings, dummy_prices)
     
     trade = df_trades.iloc[0]
     assert "📉 No Tax (Loss)" in trade["Tax Indicator"]

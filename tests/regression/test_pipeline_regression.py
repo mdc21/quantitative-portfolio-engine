@@ -57,7 +57,7 @@ def test_full_pipeline_regression(mocker, mock_fundamental_data, mock_prices):
         {"ticker": "tcs", "qty_longterm": 0, "qty_shortterm": 15}
     ]
     
-    df_trades = generate_trade_list(weights, dummy_portfolio, mock_prices, fresh_capital=100000.0)
+    df_trades, skipped_report = generate_trade_list(weights, dummy_portfolio, mock_prices, fresh_capital=100000.0)
     
     # We should have a valid dataframe (not empty) meaning the engine successfully mapped the dummy portfolio
     # against the newly optimized Markowitz weights

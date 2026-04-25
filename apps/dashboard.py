@@ -69,6 +69,7 @@ try:
     mom_lookback = st.sidebar.slider("Momentum Lookback (Days)", 30, 252, 90, help="Number of trading days to track for historical price momentum. Usually 90-180 days.")
     vol_lookback = st.sidebar.slider("Volatility Lookback (Days)", 30, 252, 60, help="Amount of history used to compute standard deviation. Lower values react faster to market crashes.")
     top_pct_filter = st.sidebar.slider("Momentum Retention Cutoff (%)", 0.1, 1.0, 0.5, help="Percentage of fundamental survivors to execute Momentum buying on. Example: 0.5 means buy top 50%.")
+    max_assets = st.sidebar.slider("Max Assets in Portfolio", 5, 50, 25, help="Concentration Limit: Forces the strategy to only pick the very best N stocks. Reduces 'dust' positions and trading churn.")
     max_turnover = st.sidebar.slider("Max Turnover Damper (%)", 0.05, 1.0, 0.30, help="Smooths giant target rebalances to prevent huge trading fees & slippage. 0.30 means weights move 30% per iteration.")
 
     # --- UNIVERSE DISCOVERY ---
@@ -99,10 +100,22 @@ try:
     with st.spinner(f"Fetching market data for {len(unique_fetch_list)} stocks (Strategy + Owner Portfolio)..."):
         prices = get_cached_prices(unique_fetch_list)
         
-    nifty_prices = None
-    if "^NSEI" in prices.columns:
-        nifty_prices = prices["^NSEI"]
-        prices = prices.drop(columns=["^NSEI"])
+    benchmark_map = {
+        "Nifty 50": ["^NSEI"],
+        "Next 50": ["^NSMIDCP"],
+        "Midcap 100": ["^NSMIDCP"], 
+        "Smallcap 100": ["^CNXSMALLCAP"]
+    }
+    
+    benchmarks = {}
+    if not prices.empty:
+        for label, tickers in benchmark_map.items():
+            for ticker in tickers:
+                if ticker in prices.columns and not prices[ticker].isnull().all():
+                    benchmarks[label] = prices[ticker]
+                    break
+    
+    nifty_prices = benchmarks.get("Nifty 50")
 
     # --- DATA QUALITY WARNINGS ---
     # Warn users when analysis is based on non-live data
@@ -153,6 +166,9 @@ try:
     else:
         st.sidebar.success("✅ Portfolio Caps optimally scaled to 100%.")
 
+    # --- TACTICAL ENGINE STATUS ---
+    # Moved diagnostics to end of script to ensure access to computed variables
+
     # Compute factors dynamically ONLY for the fundamentally approved survivors (Top 30%)
     # This ensures we don't accidentally buy a low-quality stock just because it has high momentum.
     # Compute factors dynamically ONLY for the fundamentally approved survivors
@@ -174,6 +190,13 @@ try:
         "volatility_lookback_days": vol_lookback
     })
 
+    if scores.empty:
+        st.error(f"📉 **Lookback Error:** All {len(buy_list_tickers)} stocks were skipped during scoring.")
+        st.info(f"💡 **Why?** Your lookback settings require **{max(mom_lookback, vol_lookback)} days** of history. "
+                 "The current data provider (Yahoo or Simulation) provided less than this for these tickers. "
+                 "Try reducing the **Momentum Lookback** slider in the sidebar to 30 days.")
+        st.stop()
+
     # Macro Integration
     repo, cpi = load_macro_data()
     regime = compute_macro_regime(repo, cpi, prices=prices)
@@ -186,6 +209,8 @@ try:
 
     # Filter & Sector Constraints
     selected_raw = select_top_momentum(scores, top_percent=top_pct_filter)
+    # Apply Hard Concentration Limit
+    selected_raw = selected_raw[:max_assets]
     selected = apply_sector_caps(selected_raw, sector_map, max_per_sector=3)
 
     # 🛡️ Holding Protection: Force-include user-held stocks that passed fundamentals
@@ -228,6 +253,10 @@ try:
 
     try:
         with st.spinner(f"⚖️ Optimization Stage 2: {regime['optimization_mode']} Allocations..."):
+            import importlib
+            import core.optimizer
+            importlib.reload(core.optimizer)
+            from core.optimizer import optimize_weights
             raw_weights = optimize_weights(buy_list_prices, selected, regime, sector_map, cap_map, limits)
     except Exception as opt_err:
         logger.error(f"Optimization Failure: {opt_err}", exc_info=True)
@@ -237,8 +266,21 @@ try:
     
     # Run the safety nets to force overflow into CASH (Critical for HRP which lacks native bounds)
     raw_weights = apply_sector_weight_constraints(raw_weights, sector_map, regime)
-    raw_weights = apply_cap_size_constraints(raw_weights, cap_map, cap_large, cap_mid, cap_small)
+    if raw_weights is None:
+        st.error("📉 **Sector Constraint Failure:** Mathematical engine returned no valid weights.")
+        st.stop()
+
+    raw_weights = apply_cap_size_constraints(raw_weights, cap_map, sector_map, regime, cap_large, cap_mid, cap_small)
+    if raw_weights is None:
+        st.write("DEBUG: Optimization Trace")
+        st.write(f"Weights Type: {type(raw_weights)}")
+        st.error("📉 **Cap Size Constraint Failure:** Mathematical engine returned no valid weights.")
+        st.stop()
+
     raw_weights = apply_macro_overlay(raw_weights, regime)
+    if raw_weights is None:
+        st.error("📉 **Macro Overlay Failure:** Mathematical engine returned no valid weights.")
+        st.stop()
 
     # 🛡️ Weight Floor for Protected Holdings
     # Force-included stocks often get near-zero weights from the optimizer because
@@ -274,8 +316,10 @@ try:
 
     # --- TACTICAL EXECUTION AUDIT ---
     with st.spinner("🔍 Stage 3: Running Tactical Technical Audits..."):
-        current_map = {str(k.get('stock_symbol', k.get('ticker', ''))).upper(): k for k in st.session_state['holdings_list']}
-        audit_list = list(set(selected + [t for t in current_map if t]))
+        # Extract tickers from current holdings for auditing
+        owner_holdings_tickers = [str(k.get('stock_symbol', k.get('ticker', ''))).upper() for k in st.session_state.get('holdings_list', [])]
+        # Filter audit list to only include tickers that actually have price data downloaded
+        audit_list = [t for t in set(selected + [k for k in owner_holdings_tickers if k]) if t in prices.columns]
         from core.tactical import get_bulk_tactical_audit
         st.session_state['tactical_audits'] = get_bulk_tactical_audit(prices[audit_list]) if not prices.empty else {}
 
@@ -284,7 +328,16 @@ try:
     # Forcibly purge legacy Index bugs from yesterday's JSON
     if "^NSEI" in old_state: del old_state["^NSEI"]
         
+    # 🛡️ Ensure we are using the LATEST optimizer logic for the dampening step
+    import importlib
+    import core.optimizer
+    importlib.reload(core.optimizer)
+    from core.optimizer import apply_turnover_control, clean_weights
+    
     weights = apply_turnover_control(old_state, raw_weights, max_turnover)
+    
+    # 🛡️ Weight Cleaning: Consolidate dust positions (<1%) AFTER turnover smoothing
+    weights = clean_weights(weights, min_weight=0.01)
 
     # Save State
     save_portfolio_state(weights)
@@ -361,7 +414,7 @@ try:
                     st.session_state['holdings_list'] = []
 
         with col_ing_2:
-            st.session_state['fresh_capital'] = st.number_input("Fresh Capital to Deploy (₹)", min_value=0.0, value=st.session_state.get('fresh_capital', 0.0), step=1000.0)
+            st.number_input("Fresh Capital to Deploy (₹)", min_value=0.0, key='fresh_capital', help="Enter the amount you wish to invest in the strategy. This is used to calculate share quantities.")
             st.info("💡 **Tax Tip:** Including an `avg_buy_price` column in your upload enables the execution engine to calculate precise STCG/LTCG liabilities for all trade recommendations.")
 
         st.markdown("---")
@@ -370,8 +423,8 @@ try:
             st.balloons()
             st.success("Strategy computed! Switch to the other tabs to view your optimized results.")
 
-    holdings_list = st.session_state['holdings_list']
-    fresh_capital = st.session_state['fresh_capital']
+    holdings_list = st.session_state.get('holdings_list', [])
+    fresh_capital = float(st.session_state.get('fresh_capital', 0.0))
 
     with tab1:
         if not st.session_state['is_allocated']:
@@ -396,9 +449,11 @@ try:
             from core.execution import calculate_portfolio_value
             from core.ticker_mapper import resolve_ticker
             
-            # 1. Map Existing Weights using centralized parser
+            # 1. Map Existing Weights using centralized parser (calculated once for all tabs)
             latest_prices = prices.iloc[-1] if isinstance(prices, pd.DataFrame) else prices
             summary = get_portfolio_summary(st.session_state['holdings_list'], latest_prices)
+            st.session_state['portfolio_summary'] = summary
+            
             existing_values = summary['values']
             total_existing_value = summary['total_value']
             existing_weights = summary['weights']
@@ -473,74 +528,71 @@ try:
     with tab2:
         if not st.session_state['is_allocated']:
             st.info("📈 Waiting for Strategy Allocation...")
-        elif nifty_prices is not None:
-            st.subheader("Historical Alpha Generation (6-Month)")
-            nifty_curve = (nifty_prices / nifty_prices.iloc[0]) * 100
-            
-            # Synthesize Base BenchMARKS and the OWNER PORTFOLIO
-            all_returns = prices.pct_change().dropna()
-            
-            # --- QUANT STRATEGY CURVE ---
-            daily_returns = prices[selected].pct_change().dropna()
+        else:
+            # 1. Base Strategy Curve (Hardened)
+            # Use ffill to bridge small gaps and fillna(0) in dot product to prevent NaN blowout
+            daily_returns = prices[selected].ffill().pct_change().fillna(0)
             w_array = np.array([weights.get(s, 0.0) for s in daily_returns.columns])
             port_returns = daily_returns.dot(w_array)
             port_curve = 100 * (1 + port_returns).cumprod()
             port_curve = pd.concat([pd.Series({prices.index[0]: 100.0}), port_curve])
             
-            # --- OWNER PORTFOLIO CURVE CALCULATION ---
+            df_curve = pd.DataFrame({"Quant Strategy": port_curve})
+            color_map = {"Quant Strategy": "#00FF00"}
+            
+            # 2. Add Live Benchmarks
+            for label, b_prices in benchmarks.items():
+                b_curve = (b_prices / b_prices.iloc[0]) * 100
+                df_curve[f"{label} Benchmark"] = b_curve
+                
+            color_map["Nifty 50 Benchmark"] = "#FF4444"
+            color_map["Next 50 Benchmark"] = "#9370DB" # Purple
+            color_map["Midcap 100 Benchmark"] = "#FFA500" # Orange
+            color_map["Smallcap 100 Benchmark"] = "#4169E1" # Royal Blue
+            
+            # 3. Add Your Portfolio Curve (Hardened)
             owner_curve = None
-            summary_curves = get_portfolio_summary(st.session_state['holdings_list'], prices)
-            o_weights = summary_curves['weights']
+            o_summary = st.session_state.get('portfolio_summary', {})
+            o_weights = o_summary.get('weights', {})
             
             if o_weights:
-                # Filter returns to only those tickers we own and have data for
-                o_tickers = [t for t in o_weights.keys() if t in all_returns.columns]
+                o_tickers = [t for t in o_weights.keys() if t in prices.columns]
                 if o_tickers:
-                    o_returns_df = all_returns[o_tickers]
+                    # Apply NaN hardening to Your Portfolio as well
+                    o_returns_df = prices[o_tickers].ffill().pct_change().fillna(0)
                     o_w_sum = sum(o_weights[t] for t in o_tickers)
-                    # Normalize weights to 1.0 for the owned subset to get a clean curve
-                    o_w_array = np.array([o_weights[t] / o_w_sum for t in o_tickers])
-                    
-                    o_port_returns = o_returns_df.dot(o_w_array)
-                    owner_curve = 100 * (1 + o_port_returns).cumprod()
-                    owner_curve = pd.concat([pd.Series({prices.index[0]: 100.0}), owner_curve])
+                    if o_w_sum > 1e-9:
+                        o_w_array = np.array([o_weights[t] / o_w_sum for t in o_tickers])
+                        o_port_returns = o_returns_df.dot(o_w_array)
+                        owner_curve = 100 * (1 + o_port_returns).cumprod()
+                        owner_curve = pd.concat([pd.Series({prices.index[0]: 100.0}), owner_curve])
             
-            df_curve = pd.DataFrame({
-                "Quant Strategy": port_curve,
-                "Nifty 50 Benchmark": nifty_curve
-            })
-            
-            color_map = {
-                "Quant Strategy": "#00FF00", 
-                "Nifty 50 Benchmark": "#FF4444"
-            }
-
             if owner_curve is not None:
-                df_curve["Owner Portfolio"] = owner_curve
-                color_map["Owner Portfolio"] = "#FFD700" # GOLD
+                df_curve["Your Portfolio"] = owner_curve
+                color_map["Your Portfolio"] = "#FFD700" # GOLD
             
-            mid_cols = [c for c in all_returns.columns if cap_map.get(c) == "Mid"]
-            small_cols = [c for c in all_returns.columns if cap_map.get(c) == "Small"]
-            
-            if len(mid_cols) > 0:
-                mid_returns = all_returns[mid_cols].mean(axis=1)
-                mid_curve = pd.concat([pd.Series({prices.index[0]: 100.0}), 100 * (1 + mid_returns).cumprod()])
-                df_curve["Synthetic Midcap (Next50)"] = mid_curve
-                color_map["Synthetic Midcap (Next50)"] = "#FFA500" # Orange
+            # 4. Peer/Sector Aggregates (Synthetic Fallback only if live benchmarks missing)
+            all_returns = prices.pct_change()
+            if "Midcap 100 Benchmark" not in df_curve:
+                mid_cols = [c for c in all_returns.columns if cap_map.get(c) == "Mid"]
+                if len(mid_cols) > 0:
+                    mid_returns = all_returns[mid_cols].mean(axis=1)
+                    mid_curve = pd.concat([pd.Series({prices.index[0]: 100.0}), 100 * (1 + mid_returns).cumprod()])
+                    df_curve["Synthetic Midcap"] = mid_curve
+                    color_map["Synthetic Midcap"] = "#808080"
                 
-            if len(small_cols) > 0:
-                small_returns = all_returns[small_cols].mean(axis=1)
-                small_curve = pd.concat([pd.Series({prices.index[0]: 100.0}), 100 * (1 + small_returns).cumprod()])
-                df_curve["Synthetic Smallcap (250)"] = small_curve
-                color_map["Synthetic Smallcap (250)"] = "#4169E1" # Royal Blue
-            
+            if "Smallcap 100 Benchmark" not in df_curve:
+                small_cols = [c for c in all_returns.columns if cap_map.get(c) == "Small"]
+                if len(small_cols) > 0:
+                    small_returns = all_returns[small_cols].mean(axis=1)
+                    small_curve = pd.concat([pd.Series({prices.index[0]: 100.0}), 100 * (1 + small_returns).cumprod()])
+                    df_curve["Synthetic Smallcap"] = small_curve
+                    color_map["Synthetic Smallcap"] = "#C0C0C0"
+
             fig2 = px.line(df_curve, title="Strategy Edge vs Benchmark & Your Portfolio (Base 100)",
                            color_discrete_map=color_map)
             fig2.update_traces(line=dict(width=3))
             st.plotly_chart(fig2, width='stretch')
-            
-        else:
-            st.error("Nifty 50 anchor missing from data extraction.")
 
     with tab3:
         if not st.session_state['is_allocated']:
@@ -572,41 +624,47 @@ try:
             # 🛡️ Safety Check: Prevent Plotly from crashing on NaN or negative sizes
             df_plot["Plot_Size"] = df_plot["Composite_Score"].fillna(0.01).clip(lower=0.01)
             
-            fig3 = px.scatter(
-                df_plot, 
-                x="Momentum_Rank", 
-                y="Stability_Rank",
-                color="Composite_Score",
-                size="Plot_Size",
-                hover_name="Stock",
-                color_continuous_scale="Viridis",
-                labels={"Momentum_Rank": "Momentum Strength (Percentile)", "Stability_Rank": "Trend Stability (1 - Volatility)"},
-                range_x=[0, 1.05],
-                range_y=[0, 1.05],
-                category_orders={"Quadrant": ["Golden Zone", "Speculative", "Laggards", "Risk Trap"]}
-            )
-            
-            # High-Fidelity Quadrant Lines
-            fig3.add_hline(y=0.5, line_dash="dot", line_color="rgba(255,255,255,0.3)")
-            fig3.add_vline(x=0.5, line_dash="dot", line_color="rgba(255,255,255,0.3)")
-            
-            # Quadrant Annotations
-            annotations = [
-                dict(x=0.75, y=0.95, text="GOLDEN ZONE (High Moat)", showarrow=False, font=dict(color="#10b981", size=14)),
-                dict(x=0.75, y=0.05, text="SPECULATIVE (High Vol)", showarrow=False, font=dict(color="#fbbf24", size=14)),
-                dict(x=0.25, y=0.95, text="LAGGARDS (Flat line)", showarrow=False, font=dict(color="#94a3b8", size=14)),
-                dict(x=0.25, y=0.05, text="RISK TRAP (Avoid)", showarrow=False, font=dict(color="#ef4444", size=14))
-            ]
-            for annot in annotations:
-                fig3.add_annotation(annot)
+            if df_plot.empty:
+                st.warning("⚠️ **Heatmap Gap:** No factor data available to plot.")
+            else:
+                # Remove any stocks that still have NaN ranks to prevent Plotly from crashing
+                df_plot = df_plot.dropna(subset=["Momentum_Rank", "Stability_Rank"])
+                
+                fig3 = px.scatter(
+                    df_plot, 
+                    x="Momentum_Rank", 
+                    y="Stability_Rank",
+                    color="Composite_Score",
+                    size="Plot_Size",
+                    hover_name="Stock",
+                    color_continuous_scale="Viridis",
+                    labels={"Momentum_Rank": "Momentum Strength (Percentile)", "Stability_Rank": "Trend Stability (1 - Volatility)"},
+                    range_x=[0, 1.05],
+                    range_y=[0, 1.05],
+                    category_orders={"Quadrant": ["Golden Zone", "Speculative", "Laggards", "Risk Trap"]}
+                )
+                
+                # High-Fidelity Quadrant Lines
+                fig3.add_hline(y=0.5, line_dash="dot", line_color="rgba(255,255,255,0.3)")
+                fig3.add_vline(x=0.5, line_dash="dot", line_color="rgba(255,255,255,0.3)")
+                
+                # Quadrant Annotations
+                annotations = [
+                    dict(x=0.75, y=0.95, text="GOLDEN ZONE", showarrow=False, font=dict(color="#10b981", size=14)),
+                    dict(x=0.75, y=0.05, text="SPECULATIVE", showarrow=False, font=dict(color="#fbbf24", size=14)),
+                    dict(x=0.25, y=0.95, text="LAGGARDS", showarrow=False, font=dict(color="#94a3b8", size=14)),
+                    dict(x=0.25, y=0.05, text="RISK TRAP", showarrow=False, font=dict(color="#ef4444", size=14))
+                ]
+                for annot in annotations:
+                    fig3.add_annotation(annot)
 
-            fig3.update_layout(
-                coloraxis_showscale=False,
-                margin=dict(t=30, b=30, l=30, r=30),
-                height=500
-            )
-            
-            st.plotly_chart(fig3, use_container_width=True)
+                fig3.update_layout(
+                    coloraxis_showscale=False,
+                    margin=dict(t=30, b=30, l=30, r=30),
+                    height=500
+                )
+                
+                st.plotly_chart(fig3, use_container_width=True)
             
             with st.expander("💡 How to read this chart?"):
                 st.markdown("""
@@ -682,7 +740,7 @@ try:
                 import core.execution
                 importlib.reload(core.execution)
                 from core.execution import generate_trade_list
-                df_trades = generate_trade_list(
+            df_trades, skipped_report = generate_trade_list(
                     weights, 
                     st.session_state['holdings_list'], 
                     prices, 
@@ -691,8 +749,33 @@ try:
                     tactical_audits=st.session_state.get('tactical_audits', {})
                 )
                 
+            if skipped_report:
+                with st.expander(f"⚠️ **Data Gaps Detected** ({len(skipped_report)} stocks skipped)"):
+                    st.warning("The following stocks were included in the target portfolio but were skipped for trade generation:")
+                    st.table(pd.DataFrame(skipped_report))
+
             if df_trades.empty:
-                st.warning("No actionable trades generated based on current capital and targets.")
+                st.warning("⚠️ **Execution Engine Idle:** No actionable trades generated.")
+                if fresh_capital <= 0 and not st.session_state['holdings_list']:
+                    st.info("💡 **Resolution:** Please go to the **Data Ingestion** tab and either upload a portfolio OR enter a **Fresh Capital** amount to see trade recommendations.")
+                elif fresh_capital > 0:
+                    # Check if prices are just too high for the capital
+                    highest_min_buy = 0
+                    if weights:
+                        for s, w in weights.items():
+                            if s != "CASH" and w > 0.05:
+                                p = 0
+                                try:
+                                    raw_p = prices[s].iloc[-1] if s in prices.columns else 0
+                                    p = float(raw_p)
+                                except: pass
+                                if p > highest_min_buy: highest_min_buy = p
+                    
+                    if highest_min_buy > fresh_capital:
+                        st.error(f"📉 **Capital Insufficiency:** Your entered capital (₹{fresh_capital:,.2f}) is lower than the price of a single share of your top picks (e.g. ₹{highest_min_buy:,.2f}).")
+                        st.info("💡 **Resolution:** Increase your **Fresh Capital** to at least the price of one share of your chosen stocks.")
+                    else:
+                        st.info("💡 **Resolution:** Your target portfolio weights might already match your current holdings, or the minimum trade size wasn't met.")
             else:
                 def highlight_tax(s):
                     return ['color: white; background-color: #ff4b4b; font-weight: bold' if "⚠️" in str(v) else '' for v in s]
@@ -762,3 +845,35 @@ except Exception as e:
     logger.error("Structural Runtime Fault Encountered in Dashboard GUI Pipeline.", exc_info=True)
     st.error("⚠️ System encountered a structural fault. Please review `logs/quant_system.log` for precise technical details.")
     st.stop()
+# --- FINAL: RENDER SIDEBAR DIAGNOSTICS ---
+if st.session_state.get('is_allocated', False):
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("🛡️ Engine Diagnostics")
+    try:
+        # Use session state or local variables to pull final counts
+        d_uni = len(scoring_df) if 'scoring_df' in locals() else 0
+        d_sco = len(scores) if 'scores' in locals() else 0
+        d_sel = len(selected) if 'selected' in locals() else 0
+        d_hld = len([w for w in weights.values() if w > 0.001 and w != 'CASH']) if 'weights' in locals() else 0
+        
+        # Financial Buffer Audit
+        from core.execution import calculate_portfolio_value
+        fresh_cap = float(st.session_state.get('fresh_capital', 0.0))
+        h_list = st.session_state.get('holdings_list', [])
+        fin_buffer = calculate_portfolio_value(h_list, prices, fresh_cap)
+        
+        st.sidebar.code(f"""
+Universe Discovery: {d_uni}
+Factor Scoring   : {d_sco}
+Strategy Segment : {d_sel}
+Target Positions : {d_hld}
+Allocated Capital: ₹{fin_buffer:,.0f}
+        """)
+        
+        if d_hld > 0:
+            st.sidebar.success(f"✅ Engine active with {d_hld} targets.")
+        else:
+            st.sidebar.warning("⚠️ Engine idle: 0 targets.")
+            
+    except Exception as diag_err:
+        logger.debug(f"Sidebar diagnostics deferred until next run: {diag_err}")

@@ -32,11 +32,32 @@ def test_apply_sector_weight_constraints(mock_sector_map):
     assert tech_weight <= 0.2001
     assert constrained["CASH"] > 0
 
-def test_apply_cap_size_constraints(mock_cap_map):
-    weights = {"RELIANCE.NS": 0.90}
+def test_apply_cap_size_constraints(mock_cap_map, mock_sector_map):
+    weights = {"RELIANCE.NS": 0.90, "TCS.NS": 0.10}
     cap_large_limit = 0.70
+    regime = {"rate_trend": "flat"}
     
-    constrained = apply_cap_size_constraints(weights, mock_cap_map, cap_large_limit, 0.20, 0.10)
+    # RELIANCE is "Others" (10% max). Large Cap alloc within Others is 10% * 0.70 = 7%
+    constrained = apply_cap_size_constraints(weights, mock_cap_map, mock_sector_map, regime, cap_large_limit, 0.20, 0.10)
     
-    assert constrained["RELIANCE.NS"] <= 0.7001
-    assert constrained["CASH"] >= 0.20
+    assert constrained["RELIANCE.NS"] <= 0.071
+    assert constrained["CASH"] >= 0.80  # Vast overflow because Sector limit severely truncates the 90% allocation
+
+def test_clean_weights_enforces_floor():
+    from core.optimizer import clean_weights
+    # Case: Multiple dust positions
+    weights = {
+        "RELIANCE.NS": 0.50,
+        "TCS.NS": 0.49,
+        "DUST.NS": 0.005,  # 0.5% (Below 1% floor)
+        "CRUMB.NS": 0.005   # 0.5% (Below 1% floor)
+    }
+    
+    cleaned = clean_weights(weights, min_weight=0.01)
+    
+    # RELIANCE and TCS should remain, DUST and CRUMB should move to CASH
+    assert "DUST.NS" not in cleaned
+    assert "CRUMB.NS" not in cleaned
+    assert cleaned["CASH"] == pytest.approx(0.01)
+    assert cleaned["RELIANCE.NS"] == 0.50
+    assert abs(sum(cleaned.values()) - 1.0) < 0.0001

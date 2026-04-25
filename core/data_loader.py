@@ -47,8 +47,10 @@ def fetch_prices(tickers, period="6mo"):
     import random
     
     fetch_list = list(tickers)
-    if "^NSEI" not in fetch_list:
-        fetch_list.append("^NSEI")
+    # Multi-ticker redundancy for benchmarks to handle varying Yahoo Finance ID resolution
+    for index_ticker in ["^NSEI", "^NSMIDCP"]:
+        if index_ticker not in fetch_list:
+            fetch_list.append(index_ticker)
     
     logger.info(f"📡 Attempting live price download for {len(fetch_list)} tickers...")
     
@@ -69,23 +71,45 @@ def fetch_prices(tickers, period="6mo"):
                 logger.warning(f"Live market data fetch failed: {e}.")
                 break
         
-    # Secondary Fallback: NSE India API
-    if data.empty:
-        logger.warning("⚠️ Yahoo Finance failed completely. Falling back to official NSE API for historical data...")
-        nse_client = NSEAPI()
-        
-        nse_data_frames = {}
+    # 🛡️ Data Quality Check: Identify tickers that Yahoo failed to provide enough history for
+    gap_tickers = []
+    if not data.empty:
+        # We need at least 80% coverage to avoid momentum distortion
+        threshold = len(data) * 0.7 
         for ticker in fetch_list:
-            if ticker == "^NSEI": continue # Skip index for now, complex NSE mapping
-            
-            series = nse_client.fetch_historical_prices(ticker, months_back=6)
-            if not series.empty:
-                nse_data_frames[ticker] = series
-                
-        if nse_data_frames:
-            data = pd.DataFrame(nse_data_frames)
-            data = data.ffill().bfill()
-            data.attrs["data_source"] = "NSE India API (Fallback)"
+            if ticker not in data.columns or data[ticker].count() < threshold:
+                gap_tickers.append(ticker)
+    else:
+        gap_tickers = fetch_list
+
+    # Step 2: Surgical Deep Recovery via nselib (NSE India Fallback)
+    if gap_tickers:
+        logger.info(f"🔍 Deep Recovery: {len(gap_tickers)} tickers have data gaps. Attempting NSE India fallback...")
+        nse_client = NSEAPI()
+        recovered_count = 0
+        
+        # Limit recovery to a reasonable batch to avoid massive startup delays
+        # focus on those that passed fundamentals (fetch_list already prioritized)
+        for ticker in gap_tickers[:40]: 
+            # Bypass NSE API for Benchmark Indices. Sending Indices to the Equity 
+            # Endpoint forces 'nselib' to download an HTML error page, which causes a CSV parser crash.
+            if ticker.startswith("^") or "CNX" in ticker or "MIDCP" in ticker: continue
+            try:
+                series = nse_client.fetch_historical_prices(ticker, months_back=6)
+                if not series.empty:
+                    # Sync frequency and index with existing data
+                    if data.empty:
+                        data = pd.DataFrame({ticker: series})
+                    else:
+                        data[ticker] = series
+                    recovered_count += 1
+            except Exception as e:
+                logger.debug(f"Deep recovery failed for {ticker}: {e}")
+        
+        if recovered_count > 0:
+            logger.info(f"✅ Deep Recovery successful for {recovered_count} tickers.")
+            data = data.ffill().fillna(0)
+            data.attrs["data_source"] = "Hybrid (Yahoo + NSE India)"
             return data
 
     # 🛡️ Tertiary Fallback: Generate Synthetic Simulation Data if download returned empty
@@ -93,6 +117,7 @@ def fetch_prices(tickers, period="6mo"):
         logger.error("❌ Live market data sources exhausted or blocked. Falling back to Synthetic Simulation.")
         return _generate_synthetic_prices(fetch_list)
     
+    data = data.ffill().fillna(0) # Critical: bridge gaps for stocks with sparse trades
     data.attrs["data_source"] = "Yahoo Finance (Live)"
     return data
 

@@ -60,9 +60,10 @@ def generate_trade_list(target_weights, holdings_list, live_prices, fresh_capita
         tactical_audits = {}
     
     if total_capital <= 0:
-        return pd.DataFrame()
+        return pd.DataFrame(), [{"Stock": "General", "Reason": "Total capital is zero"}]
         
     trades = []
+    skipped_report = []
     
     current_map = {}
     logger.info("Building Trade List Map from current holdings...")
@@ -117,6 +118,7 @@ def generate_trade_list(target_weights, holdings_list, live_prices, fresh_capita
             pass
             
         if price <= 0:
+            skipped_report.append({"Stock": ticker, "Reason": f"Missing or Zero Market Price (Weight: {target_weight*100:.1f}%)"})
             continue
             
         target_value = total_capital * target_weight
@@ -124,6 +126,9 @@ def generate_trade_list(target_weights, holdings_list, live_prices, fresh_capita
         
         delta_qty = target_qty - current_qty
         
+        if delta_qty == 0 and target_value > 0 and current_qty == 0:
+             skipped_report.append({"Stock": ticker, "Reason": f"Insufficient Capital for 1 Share (Target: ₹{target_value:,.2f} | Price: ₹{price:,.2f})"})
+
         if delta_qty != 0:
             action = "BUY" if delta_qty > 0 else "SELL"
             
@@ -243,4 +248,4 @@ def generate_trade_list(target_weights, holdings_list, live_prices, fresh_capita
     if not df_trades.empty:
         df_trades = df_trades.sort_values(by=["Action", "Est. Value"], ascending=[True, False])
 
-    return df_trades
+    return df_trades, skipped_report

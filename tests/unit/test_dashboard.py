@@ -25,11 +25,15 @@ def test_dashboard_render(mocker, mock_fundamental_data, mock_prices):
     mocker.patch("core.data_loader.fetch_prices", return_value=mock_prices)
     mocker.patch("core.macro.load_macro_data", return_value=(mock_repo, mock_cpi))
     
+    # 🛡️ SPEED BOOST: Mock the heavy optimization and filter steps for UI testing
+    mocker.patch("core.universe.apply_fundamental_filters", return_value=(["RELIANCE.NS", "TCS.NS"], {"RELIANCE.NS": "Energy", "TCS.NS": "Tech"}, {"RELIANCE.NS": "Large", "TCS.NS": "Large"}, pd.DataFrame([{"Stock": "RELIANCE.NS", "Score": 90, "DataSource": "Live"}, {"Stock": "TCS.NS", "Score": 85, "DataSource": "Live"}])))
+    mocker.patch("apps.dashboard.optimize_weights", return_value={"RELIANCE.NS": 0.5, "TCS.NS": 0.5, "CASH": 0.0})
+
     # 2. Load the App
     at = AppTest.from_file("apps/dashboard.py")
     
-    # 3. Increase timeout slightly for compilation
-    at.run(timeout=30)
+    # 3. Increase timeout for compilation
+    at.run(timeout=60)
     
     # 4. Assert Title and Main Components
     assert at.title[0].value == "⚙️ Strategy Parameters" # Sidebar title

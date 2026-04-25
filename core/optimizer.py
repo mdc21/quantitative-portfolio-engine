@@ -3,6 +3,7 @@ import pandas as pd
 from scipy.optimize import minimize
 from scipy.cluster.hierarchy import linkage
 from scipy.spatial.distance import squareform
+from core.logger import logger
 
 def optimize_weights(prices, selected_stocks, regime, sector_map=None, cap_map=None, limits=None):
     mode = regime.get("optimization_mode", "HRP")
@@ -127,10 +128,13 @@ def _optimize_markowitz(prices, selected_stocks, sector_map, cap_map, limits):
 
 def apply_turnover_control(old_weights, new_weights, max_turnover=0.3):
     """
-    Blends previous weights with newly calculated target weights
-    to systematically reduce execution churn.
+    Blends previous weights with newly calculated target weights.
+    
+    SPECIAL RULE: If old_weights was effectively CASH (Fresh Capital),
+    the damper is bypassed to allow immediate deployment.
     """
-    if not old_weights:
+    if not old_weights or old_weights.get("CASH", 0.0) > 0.99:
+        # Full deployment for fresh capital or first-run
         return new_weights
         
     adjusted_weights = {}
@@ -142,15 +146,19 @@ def apply_turnover_control(old_weights, new_weights, max_turnover=0.3):
         if stock in old_weights and stock in new_weights:
             adjusted_weights[stock] = (1.0 - max_turnover) * old_w + max_turnover * new_w
         elif stock in new_weights:
+            # Dampen entry into BRAND NEW stocks
             adjusted_weights[stock] = max_turnover * new_w
         elif stock in old_weights:
+            # Dampen exit from OLD stocks
             adjusted_weights[stock] = (1.0 - max_turnover) * old_w
 
+    # Recalculate total to see how much "Unused Damper Budget" we have
     total = sum(adjusted_weights.values())
-    if total == 0:
-        return new_weights
+    
+    # Re-normalize to 1.0, which naturally re-distributes the damped delta
+    if total > 0:
+        adjusted_weights = {k: v/total for k, v in adjusted_weights.items()}
         
-    adjusted_weights = {k: v/total for k, v in adjusted_weights.items()}
     return adjusted_weights
 
 def apply_macro_overlay(weights, regime):
@@ -171,11 +179,7 @@ def apply_macro_overlay(weights, regime):
 
     return adjusted
 
-def apply_sector_weight_constraints(weights, sector_map, regime):
-    """
-    Applies aggressive percentage limits on correlated sectors and factor clusters.
-    Excess capital is swept directly into a CASH placeholder.
-    """
+def get_category_caps(regime):
     category_caps = {
         "Financials": 0.30,
         "Technology": 0.20,
@@ -186,9 +190,26 @@ def apply_sector_weight_constraints(weights, sector_map, regime):
         "PSU_Utilities": 0.10,
         "Others": 0.10
     }
-    
     if regime.get("rate_trend") == "rising":
         category_caps["Financials"] = 0.20
+    return category_caps
+
+def map_sector(ys):
+    ys_lower = str(ys).lower()
+    if "financial" in ys_lower: return "Financials", "Financials_Cluster"
+    if "technology" in ys_lower: return "Technology", "Growth"
+    if "healthcare" in ys_lower: return "Pharma_Healthcare", "Defensives"
+    if "consumer" in ys_lower: return "Consumer_FMCG", "Defensives"
+    if "utility" in ys_lower or "energy" in ys_lower: return "PSU_Utilities", "Defensives"
+    if "basic materials" in ys_lower or "industrial" in ys_lower: return "Industrials_Infra", "Cyclicals"
+    return "Others", "Others"
+
+def apply_sector_weight_constraints(weights, sector_map, regime):
+    """
+    Applies aggressive percentage limits on correlated sectors and factor clusters.
+    Excess capital is swept directly into a CASH placeholder.
+    """
+    category_caps = get_category_caps(regime)
 
     cluster_caps = {
         "Cyclicals": 0.35,
@@ -196,16 +217,6 @@ def apply_sector_weight_constraints(weights, sector_map, regime):
         "Defensives": 0.35,
         "Growth": 0.30
     }
-
-    def map_sector(ys):
-        ys_lower = str(ys).lower()
-        if "financial" in ys_lower: return "Financials", "Financials_Cluster"
-        if "technology" in ys_lower: return "Technology", "Growth"
-        if "healthcare" in ys_lower: return "Pharma_Healthcare", "Defensives"
-        if "consumer" in ys_lower: return "Consumer_FMCG", "Defensives"
-        if "utility" in ys_lower or "energy" in ys_lower: return "PSU_Utilities", "Defensives"
-        if "basic materials" in ys_lower or "industrial" in ys_lower: return "Industrials_Infra", "Cyclicals"
-        return "Others", "Others"
 
     cat_allocs = {k: 0.0 for k in category_caps}
     clust_allocs = {k: 0.0 for k in cluster_caps}
@@ -240,36 +251,73 @@ def apply_sector_weight_constraints(weights, sector_map, regime):
         
     return constrained_weights
 
-def apply_cap_size_constraints(weights, cap_map, large_limit=0.7, mid_limit=0.2, small_limit=0.1):
+def apply_cap_size_constraints(weights, cap_map, sector_map, regime, large_limit=0.7, mid_limit=0.2, small_limit=0.1):
     """
-    Rationally restricts structural capital exposure into highly volatile Mid and Small Cap segments.
-    The excess overflow inherently routes directly back into the CASH preservation mechanic.
+    Rationally restricts structural capital exposure into highly volatile Mid and Small Cap segments,
+    but applies them proportionally to the Sector limit.
+    e.g., if Tech limit is 20%, max Mid-Cap Tech = 20% * mid_limit (0.2) = 4% out of total portfolio.
     """
-    cap_allocs = {"Large": 0.0, "Mid": 0.0, "Small": 0.0, "Unknown": 0.0}
-    limits = {"Large": large_limit, "Mid": mid_limit, "Small": small_limit, "Unknown": 1.0}
-    
-    constrained_weights = {}
+    try:
+        category_caps = get_category_caps(regime)
+        # We track how much of each cap size we have allocated *within* each sector
+        sector_cap_allocs = {k: {"Large": 0.0, "Mid": 0.0, "Small": 0.0, "Unknown": 0.0} for k in category_caps}
+        sector_cap_allocs["Others"] = {"Large": 0.0, "Mid": 0.0, "Small": 0.0, "Unknown": 0.0}
+        
+        cap_multipliers = {"Large": large_limit, "Mid": mid_limit, "Small": small_limit, "Unknown": 1.0}
+        
+        constrained_weights = {}
+        cash = weights.get("CASH", 0.0) if weights else 0.0
+        
+        stocks = [s for s in weights.keys() if s != "CASH"] if weights else []
+        sorted_stocks = sorted(stocks, key=lambda k: weights[k], reverse=True)
+        
+        for stock in sorted_stocks:
+            w = weights[stock]
+            size = cap_map.get(stock, "Large")
+            ys = sector_map.get(stock, "Others")
+            cat, _ = map_sector(ys)
+            
+            # Absolute maximum portfolio % this Cap is allowed to take within this Sector
+            sector_max = category_caps.get(cat, 0.10)
+            sector_cap_limit = sector_max * cap_multipliers.get(size, 1.0)
+            
+            # How much room is left for this specific Cap size within this specific Sector?
+            room = max(0.0, sector_cap_limit - sector_cap_allocs[cat][size])
+            allowed = min(w, room)
+            
+            if allowed < w:
+                cash += (w - allowed)
+                
+            if allowed > 0:
+                constrained_weights[stock] = allowed
+                
+            sector_cap_allocs[cat][size] += allowed
+                
+        if cash > 0.001:
+            constrained_weights["CASH"] = cash
+            
+        return constrained_weights
+    except Exception as e:
+        logger.error(f"FATAL: Internal Overflow in apply_cap_size_constraints: {e}")
+        return None
+
+def clean_weights(weights, min_weight=0.01):
+    """
+    Enforces a minimum weight floor to avoid 'dust' positions that can't be executed.
+    Weights below the floor are moved to CASH.
+    """
+    cleaned = {}
     cash = weights.get("CASH", 0.0)
     
-    stocks = [s for s in weights.keys() if s != "CASH"]
-    sorted_stocks = sorted(stocks, key=lambda k: weights[k], reverse=True)
-    
-    for stock in sorted_stocks:
-        w = weights[stock]
-        size = cap_map.get(stock, "Large")
-        
-        room = max(0.0, limits.get(size, 1.0) - cap_allocs[size])
-        allowed = min(w, room)
-        
-        if allowed < w:
-            cash += (w - allowed)
+    for stock, w in weights.items():
+        if stock == "CASH":
+            continue
+        if w < min_weight:
+            cash += w
+        else:
+            cleaned[stock] = w
             
-        if allowed > 0:
-            constrained_weights[stock] = allowed
-            
-        cap_allocs[size] += allowed
-        
     if cash > 0.001:
-        constrained_weights["CASH"] = cash
+        cleaned["CASH"] = cash
         
-    return constrained_weights
+    return cleaned
