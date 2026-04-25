@@ -1,4 +1,5 @@
 import yaml
+import pandas as pd
 from core.data_loader import fetch_prices
 from core.factors import compute_factor_scores
 from core.momentum import select_top_momentum
@@ -30,17 +31,20 @@ from core.state import load_portfolio_state, save_portfolio_state
 from core.optimizer import apply_turnover_control, apply_cap_size_constraints
 from core.momentum import apply_sector_caps
 
-universe_dict = fetch_broad_universe("multi_cap")
-tickers, sector_map, cap_map, scoring_df = apply_fundamental_filters(universe_dict)
+universe_tickers = fetch_broad_universe("multi_cap")
+tickers, sector_map, cap_map, asset_map, underlying_map, region_map, scoring_df = apply_fundamental_filters(universe_tickers)
 
 capital = config["capital"]
 
-index_data = yf.download("^NSEI", period="6mo", session=session)
-if index_data.empty:
-    print("Failed to download market data from Yahoo Finance! Continuing without benchmark visualization dependencies...")
-    index_prices = None
-else:
-    index_prices = index_data["Close"]
+index_prices = None
+try:
+    # Quick probe to see if we even have internet for the benchmark
+    session.get("https://query1.finance.yahoo.com", timeout=1)
+    index_data = yf.download("^NSEI", period="6mo", session=session, progress=False)
+    if index_data is not None and not index_data.empty:
+        index_prices = index_data["Close"]
+except Exception:
+    logger.warning("📊 Benchmark indices unreachable. Proceeding with internal math engine.")
 
 try:
     logger.info("Initiating Headless Execution Pipeline...")
@@ -53,10 +57,8 @@ try:
     logger.info("Fetching Broad Universe...")
     universe_tickers = fetch_broad_universe("multi_cap")
 
-    # 2. Fundamental Sandbox
-    logger.info("Running Fundamental Matrix...")
-    tickers, sector_map, cap_map, scoring_df = apply_fundamental_filters(universe_tickers)
-
+    # 2. Fundamental Sandbox is already run above to populate maps
+    # We just ensure tickers are locally scoped
     if not tickers:
         logger.error("Zero fundamental assets survived logic trap.")
         exit()
@@ -74,9 +76,14 @@ try:
     scores = compute_factor_scores(prices, config)
 
     # 5. Selection
-    selected_raw = select_top_momentum(scores, config["top_percentile"])
+    selected_raw = select_top_momentum(scores, config.get("top_momentum_percentile", 0.5))
     # 6. Sector Overlay
-    selected = apply_sector_caps(selected_raw, sector_map, config["max_per_sector"])
+    selected = apply_sector_caps(selected_raw, sector_map, config.get("max_per_sector", 0.2))
+
+    # 🛡️ Prevent Passive vehicles (ETFs/MFs) from losing the Momentum contest
+    for tick in prices.columns:
+        if asset_map.get(tick) in ["ETF", "MutualFund"] and tick not in selected:
+            selected.append(tick)
 
     if not selected:
         logger.warning("No assets remained following Momentum & Sector Caps.")
@@ -85,6 +92,7 @@ try:
     # 7. Weights
     logger.info("Generating Final Math Constraints...")
     regime = compute_macro_regime(repo, cpi, prices=prices)
+    regime["equity_target"] = config.get("equity_target", 0.60)
     
     limits = {
         "cap_large": 0.70,
@@ -102,28 +110,31 @@ try:
         }
     }
     
-    weights = optimize_weights(prices, selected, regime, sector_map, cap_map, limits)
+    weights = optimize_weights(prices, selected, regime, asset_map, sector_map, cap_map, limits)
     weights = apply_sector_weight_constraints(weights, sector_map, regime)
-    weights = apply_cap_size_constraints(weights, cap_map)
+    weights = apply_cap_size_constraints(weights, cap_map, sector_map, regime)
+    from core.optimizer import apply_asset_class_constraints
+    weights = apply_asset_class_constraints(weights, asset_map, underlying_map, region_map, equity_target=0.60)
     weights = apply_macro_overlay(weights, regime)
     weights = apply_drawdown_control(weights, prices[selected])
 
     logger.info(f"Pipeline Cleared. Final Ratios: {weights}")
 
+    # Step 4.5: Turnover control & State persistence
+    old_state = load_portfolio_state()
+    if "^NSEI" in old_state:
+        del old_state["^NSEI"]
+        
+    weights = apply_turnover_control(old_state, weights, max_turnover=1.0)
+    save_portfolio_state(weights, retention_days=60)
+    # Step 5: Rebalance
+    latest_prices = prices.iloc[-1]
+    portfolio = rebalance_portfolio(capital, weights, latest_prices)
+
 except Exception as e:
     logger.error("Critical Fault inside Headless Pipeline Router.", exc_info=True)
     print("Execution aborted due to runtime errors. Check logs/quant_system.log for details.")
-
-# Step 4.5: Turnover control & State persistence
-old_state = load_portfolio_state()
-if "^NSEI" in old_state:
-    del old_state["^NSEI"]
-    
-weights = apply_turnover_control(old_state, weights, max_turnover=0.3)
-save_portfolio_state(weights, retention_days=60)
-# Step 5: Rebalance
-latest_prices = prices.iloc[-1]
-portfolio = rebalance_portfolio(capital, weights, latest_prices)
+    exit(1)
 
 # Output
 print("\nFinal Portfolio Allocation:\n")

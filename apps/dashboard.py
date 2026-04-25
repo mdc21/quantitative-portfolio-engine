@@ -9,7 +9,7 @@ import plotly.express as px
 from core.data_loader import fetch_prices
 from core.factors import compute_factor_scores
 from core.momentum import select_top_momentum, apply_sector_caps
-from core.optimizer import optimize_weights, apply_macro_overlay, apply_turnover_control, apply_sector_weight_constraints, apply_cap_size_constraints
+from core.optimizer import optimize_weights, apply_macro_overlay, apply_turnover_control, apply_sector_weight_constraints, apply_cap_size_constraints, apply_asset_class_constraints
 from core.macro import load_macro_data, compute_macro_regime
 from core.universe import fetch_broad_universe, apply_fundamental_filters
 from core.ticker_mapper import resolve_ticker
@@ -72,6 +72,10 @@ try:
     max_assets = st.sidebar.slider("Max Assets in Portfolio", 5, 50, 25, help="Concentration Limit: Forces the strategy to only pick the very best N stocks. Reduces 'dust' positions and trading churn.")
     max_turnover = st.sidebar.slider("Max Turnover Damper (%)", 0.05, 1.0, 0.30, help="Smooths giant target rebalances to prevent huge trading fees & slippage. 0.30 means weights move 30% per iteration.")
 
+    st.sidebar.header("Asset Allocation Setup")
+    equity_target = st.sidebar.slider("Target Equity Split (%)", 0.1, 1.0, 0.60, help="Controls the ratio of Equities versus Passive assets (ETFs & Mutual Funds). 0.60 means 60% standard stocks, 40% Passive.")
+    metals_cap = st.sidebar.slider("Max Metals/Commodity Allocation (%)", 0.0, 0.20, 0.05, help="Global Absolute Cap: Ensures that no matter what the 60:40 rules say, Metal/Commodity ETFs never exceed this total percentage of the portfolio.")
+
     # --- UNIVERSE DISCOVERY ---
     @st.cache_data(ttl=86400)
     def get_institutional_universe(top_pct):
@@ -80,7 +84,7 @@ try:
         return apply_fundamental_filters(broad_universe, top_percentile=top_pct)
 
     with st.spinner("🤖 Evaluating Fundamental Screener (Daily Cache)..."):
-        investable_tickers, sector_map, cap_map, scoring_df = get_institutional_universe(fund_cutoff)
+        investable_tickers, sector_map, cap_map, asset_map, underlying_map, region_map, scoring_df = get_institutional_universe(fund_cutoff)
         all_assessed_tickers = scoring_df["Stock"].tolist() if not scoring_df.empty else investable_tickers
 
     # Fetch - Expand fetch to include user's owner tickers for comparison chart
@@ -229,6 +233,18 @@ try:
     if protected_count > 0:
         logger.info(f"[HoldingProtection] Protected {protected_count} user-held blue-chips from synthetic momentum dropout")
 
+    # 🛡️ Asset Class Protection: Force-include ETFs and Mutual Funds
+    # Because ETFs track averages, their absolute momentum is mathematically lower
+    # than the hottest individual stocks. If we don't protect them, the momentum 
+    # sorter deletes them all, causing the 60:40 optimizer to have 0% Passive assets.
+    passive_count = 0
+    for tick in buy_list_tickers:
+        if asset_map.get(tick) in ["ETF", "MutualFund"] and tick not in selected:
+            selected.append(tick)
+            passive_count += 1
+    if passive_count > 0:
+         logger.info(f"[AssetProtection] Force-included {passive_count} Passive Trackers into solver to enable 60/40 Equity bounds.")
+
     if not selected:
         logger.warning("Momentum Engine returned exactly 0 assets after constraint trimming.")
         st.error("No stocks met the criteria to proceed to Portfolio Allocation.")
@@ -251,13 +267,16 @@ try:
         }
     }
 
+    # --- INJECT UI OVERRIDES INTO REGIME ---
+    regime["equity_target"] = equity_target
+    regime["metals_cap"] = metals_cap
+    
     try:
         with st.spinner(f"⚖️ Optimization Stage 2: {regime['optimization_mode']} Allocations..."):
             import importlib
             import core.optimizer
             importlib.reload(core.optimizer)
-            from core.optimizer import optimize_weights
-            raw_weights = optimize_weights(buy_list_prices, selected, regime, sector_map, cap_map, limits)
+            raw_weights = optimize_weights(buy_list_prices, selected, regime, asset_map, sector_map, cap_map, limits)
     except Exception as opt_err:
         logger.error(f"Optimization Failure: {opt_err}", exc_info=True)
         st.error(f"⚠️ **Portfolio Optimization Fault:** The {regime['optimization_mode']} solver encountered a mathematical singularity or timeout with {len(selected)} assets.")
@@ -265,6 +284,11 @@ try:
         st.stop()
     
     # Run the safety nets to force overflow into CASH (Critical for HRP which lacks native bounds)
+    raw_weights = apply_asset_class_constraints(raw_weights, asset_map, underlying_map, region_map, equity_target, metals_cap)
+    if raw_weights is None:
+        st.error("📉 **Asset Class Constraint Failure:** Mathematical engine returned no valid weights.")
+        st.stop()
+        
     raw_weights = apply_sector_weight_constraints(raw_weights, sector_map, regime)
     if raw_weights is None:
         st.error("📉 **Sector Constraint Failure:** Mathematical engine returned no valid weights.")
@@ -313,6 +337,14 @@ try:
     # 3. Final CASH Adjustment (Total must be 1.0)
     total_non_cash = sum([w for s, w in raw_weights.items() if s != "CASH"])
     raw_weights["CASH"] = max(0, 1.0 - total_non_cash)
+
+    # --- ADVANCED RISK ENGINE ---
+    from core.optimizer import calculate_cvar
+    from core.stress_tests import run_stress_scenarios
+    
+    portfolio_cvar = calculate_cvar(buy_list_prices, {k: v for k, v in raw_weights.items() if k != "CASH"})
+    stress_results = run_stress_scenarios(buy_list_prices, raw_weights)
+
 
     # --- TACTICAL EXECUTION AUDIT ---
     with st.spinner("🔍 Stage 3: Running Tactical Technical Audits..."):
@@ -380,7 +412,8 @@ try:
 
 
     # Tabs Layout
-    tab0, tab1, tab2, tab3, tab4, tab5 = st.tabs(["📥 Data Ingestion", "🚀 Portfolio Allocation", "📈 Price Action", "🔥 Factor Heatmap", "📊 Scoreboard", "🛒 Shopping List"])
+    # Tabs Layout
+    tab0, tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["📥 Data Ingestion", "🚀 Portfolio Allocation", "📈 Price Action", "🔥 Factor Heatmap", "📊 Scoreboard", "🛒 Shopping List", "🛡️ Risk Engine"])
 
     with tab0:
         st.subheader("📥 Step 1: Portfolio Data Ingestion")
@@ -522,7 +555,6 @@ try:
 
             st.markdown("---")
             st.subheader("📋 Portfolio Comparison Matrix")
-            st.caption("Comparative breakdown of current vs. target weights (Filtered for >0.01% weight)")
             st.dataframe(df_comparison, hide_index=True, use_container_width=True)
 
     with tab2:
@@ -838,6 +870,46 @@ try:
                                 )
                             }
                         )
+
+    with tab6:
+        if not st.session_state['is_allocated']:
+            st.info("🛡️ Waiting for Portfolio Statistics...")
+        else:
+            st.subheader("🛡️ Institutional Risk Engine")
+            
+            risk_col1, risk_col2 = st.columns(2)
+            
+            with risk_col1:
+                # Use a small epsilon to avoid divide by zero if prices are empty
+                if not buy_list_prices.empty:
+                    st.metric(label="Portfolio 95% CVaR", value=f"{portfolio_cvar*100:.2f}%", 
+                            help="Conditional Value at Risk (Expected Shortfall). If the 5% worst-case event happens, this is the expected average loss.")
+                    st.progress(min(max(abs(portfolio_cvar) * 5, 0.0), 1.0))
+                    if abs(portfolio_cvar) < 0.03:
+                        st.success("✅ Risk Profile: Low (Defensive)")
+                    elif abs(portfolio_cvar) < 0.05:
+                        st.warning("⚠️ Risk Profile: Moderate")
+                    else:
+                        st.error("🚨 Risk Profile: Aggressive (High Tail Risk)")
+                else:
+                    st.metric(label="Portfolio 95% CVaR", value="N/A")
+
+            with risk_col2:
+                # Gauge-like indicator for diversifying assets
+                p_count = len([s for s in weights if asset_map.get(s) != "Equity" and s != "CASH"])
+                st.metric(label="Diversification Assets", value=p_count, help="Count of non-equity assets (ETFs, Gold, Liquid) for crash protection.")
+            
+            st.markdown("---")
+            st.subheader("🌋 Stress Scenario Simulations")
+            st.caption("Projected portfolio impact under absolute black-swan market conditions.")
+            
+            if stress_results:
+                stress_cols = st.columns(len(stress_results))
+                for i, (name, impact_val) in enumerate(stress_results.items()):
+                    stress_cols[i % len(stress_cols)].metric(label=name, value=f"{impact_val*100:.2f}%", 
+                                          delta=f"{impact_val*100:.1f}%", delta_color="inverse")
+            else:
+                st.info("Not enough historical volatility data to run stress simulations.")
 
     logger.info("Streamlit Application rendered successfully.")
 

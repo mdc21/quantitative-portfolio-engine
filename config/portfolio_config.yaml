@@ -21,3 +21,5 @@ rebalance_frequency_days: 30
 momentum_lookback_days: 90
 volatility_lookback_days: 60
 top_momentum_percentile: 0.5
+equity_target: 0.60
+max_per_sector: 0.20

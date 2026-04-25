@@ -5,13 +5,55 @@ from scipy.cluster.hierarchy import linkage
 from scipy.spatial.distance import squareform
 from core.logger import logger
 
-def optimize_weights(prices, selected_stocks, regime, sector_map=None, cap_map=None, limits=None):
-    mode = regime.get("optimization_mode", "HRP")
+def optimize_weights(prices, selected_stocks, regime, asset_class_map=None, sector_map=None, cap_map=None, limits=None):
+    """
+    Orchestrates optimization across different asset classes.
+    As per user strategy: Equities use regime-based switching, 
+    while ETFs/Mutual Funds MUST use HRP for stability.
+    """
+    equities = [s for s in selected_stocks if asset_class_map.get(s) == "Equity"]
+    passives = [s for s in selected_stocks if asset_class_map.get(s) in ["ETF", "MutualFund"]]
     
-    if mode == "Markowitz":
-        return _optimize_markowitz(prices, selected_stocks, sector_map, cap_map, limits)
+    # 1. Optimize Equities (Aggressive/Defensive based on Regime)
+    mode = regime.get("optimization_mode", "HRP")
+    if mode == "Markowitz" and equities:
+        eq_weights = _optimize_markowitz(prices, equities, sector_map, cap_map, limits)
     else:
-        return _optimize_hrp(prices, selected_stocks)
+        eq_weights = _optimize_hrp(prices, equities)
+        
+    # 2. Optimize Passives (FORCE HRP for diversification)
+    pass_weights = _optimize_hrp(prices, passives)
+    
+    # ⚖️ Scaled Merging: Preserve relative HRP/Markowitz importance within each segment
+    # Instead of raw merging (which sums to 2.0), we scale by the portfolio's top-level mandate
+    equity_target = regime.get("equity_target", 0.60)
+    passive_target = 1.0 - equity_target
+    
+    # Handle edge cases where one bucket might be empty
+    if not equities:
+        eq_weights = {}
+        pass_weights = {k: v for k, v in pass_weights.items()} # Passive gets 100% if no equity
+    elif not passives:
+        pass_weights = {}
+        eq_weights = {k: v for k, v in eq_weights.items()} # Equity gets 100% if no passive
+    else:
+        eq_weights = {k: v * equity_target for k, v in eq_weights.items()}
+        pass_weights = {k: v * passive_target for k, v in pass_weights.items()}
+
+    combined = {**eq_weights, **pass_weights}
+    return combined
+
+def calculate_cvar(prices, weights, confidence_level=0.95):
+    """
+    Computes Conditional Value at Risk (Expected Shortfall)
+    """
+    returns = prices[list(weights.keys())].pct_change().dropna()
+    portfolio_returns = (returns * pd.Series(weights)).sum(axis=1)
+    
+    var = np.percentile(portfolio_returns, (1 - confidence_level) * 100)
+    cvar = portfolio_returns[portfolio_returns <= var].mean()
+    return cvar
+
 
 def _optimize_hrp(prices, selected_stocks):
     """
@@ -188,6 +230,7 @@ def get_category_caps(regime):
         "Pharma_Healthcare": 0.15,
         "Chemicals": 0.12, 
         "PSU_Utilities": 0.10,
+        "Passive_Index": 0.50,
         "Others": 0.10
     }
     if regime.get("rate_trend") == "rising":
@@ -202,7 +245,76 @@ def map_sector(ys):
     if "consumer" in ys_lower: return "Consumer_FMCG", "Defensives"
     if "utility" in ys_lower or "energy" in ys_lower: return "PSU_Utilities", "Defensives"
     if "basic materials" in ys_lower or "industrial" in ys_lower: return "Industrials_Infra", "Cyclicals"
+    if "passive" in ys_lower or "index" in ys_lower: return "Passive_Index", "Defensives"
     return "Others", "Others"
+
+def apply_asset_class_constraints(weights, asset_class_map, underlying_map, region_map, equity_target=0.60, metal_cap=0.05):
+    """
+    Forces the portfolio into Top-Level buckets: Equities (60%) vs Passive (40%).
+    Ensures that shortfalls in any bucket are upscaled to hit the mandate exactly.
+    """
+    passive_target = max(0.0, 1.0 - equity_target)
+    
+    # 1. Identify Buckets
+    buckets = {"Equity": [], "Passive_Domestic": [], "Passive_International": []}
+    for stock in weights:
+        if stock == "CASH": continue
+        ac = asset_class_map.get(stock, "Equity")
+        reg = region_map.get(stock, "Domestic")
+        
+        if ac == "Equity":
+            buckets["Equity"].append(stock)
+        else:
+            if reg == "International":
+                buckets["Passive_International"].append(stock)
+            else:
+                buckets["Passive_Domestic"].append(stock)
+    
+    # 2. Target Allocation Scaling
+    bucket_targets = {
+        "Equity": equity_target,
+        "Passive_Domestic": passive_target * 0.80,
+        "Passive_International": passive_target * 0.20
+    }
+    
+    new_weights = {}
+    total_deployed = 0.0
+    
+    for b_name, b_stocks in buckets.items():
+        target = bucket_targets.get(b_name, 0.0)
+        current_sum = sum(weights[s] for s in b_stocks)
+        
+        if current_sum > 0:
+            # Upscale/Downscale this bucket to hit target EXACTLY
+            scalar = target / current_sum
+            logger.info(f"⚖️ Scaling Bucket '{b_name}': {len(b_stocks)} assets, target {target*100:.1f}%, scalar {scalar:.2f}")
+            for s in b_stocks:
+                new_weights[s] = weights[s] * scalar
+            total_deployed += target
+        else:
+            # If a bucket is EMPTY, the mandate's target remains as CASH
+            logger.warning(f"⚠️ Mandatory bucket {b_name} is empty (0 assets). {target*100:.1f}% remains in Cash Reserve.")
+            
+    # 3. Metal Ceiling (Hard secondary constraint)
+    metal_alloc = 0.0
+    for s, w in new_weights.items():
+        if underlying_map.get(s) == "Metal":
+            metal_alloc += w
+            
+    if metal_alloc > metal_cap:
+        # Scale down metals to hit the ceiling
+        scalar = metal_cap / metal_alloc
+        for s in new_weights:
+            if underlying_map.get(s) == "Metal":
+                old_w = new_weights[s]
+                new_weights[s] *= scalar
+                # The excess from metal ceiling goes to CASH
+        
+    # Final normalization
+    new_total = sum(new_weights.values())
+    new_weights["CASH"] = max(0.0, 1.0 - new_total)
+    
+    return new_weights
 
 def apply_sector_weight_constraints(weights, sector_map, regime):
     """

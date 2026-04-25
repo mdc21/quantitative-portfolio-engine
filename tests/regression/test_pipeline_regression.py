@@ -23,7 +23,7 @@ def test_full_pipeline_regression(mocker, mock_fundamental_data, mock_prices):
     universe_dict = {t: "Large" for t in mock_fundamental_data.keys()}
     
     # 3. Step 1: Fundamental Filters
-    tickers, sector_map, cap_map, scoring_df = apply_fundamental_filters(universe_dict, top_percentile=1.0)
+    tickers, sector_map, cap_map, asset_map, underlying_map, scoring_df = apply_fundamental_filters(universe_dict, top_percentile=1.0)
     assert len(tickers) == 4
     
     # 4. Step 2: Factor Scores

@@ -20,7 +20,7 @@ def test_apply_fundamental_filters(mocker, mock_fundamental_data):
     }
     
     # Run filter with top 50%
-    tickers, sector_map, cap_map, df = apply_fundamental_filters(universe_dict, top_percentile=0.5)
+    tickers, sector_map, cap_map, asset_map, underlying_map, df = apply_fundamental_filters(universe_dict, top_percentile=0.5)
     
     # Check results
     assert len(tickers) == 2
@@ -39,7 +39,7 @@ def test_apply_fundamental_filters_empty(mocker):
     mocker.patch("core.universe.yf.Ticker", side_effect=Exception("API Down"))
     
     universe_dict = {"INVALID.NS": "Small"}
-    tickers, sector_map, cap_map, df = apply_fundamental_filters(universe_dict)
+    tickers, sector_map, cap_map, asset_map, underlying_map, df = apply_fundamental_filters(universe_dict)
     
     # Simulation fallback generates data — so 1 ticker in = 1 ticker out
     assert len(tickers) == 1
@@ -71,7 +71,7 @@ def test_apply_fundamental_filters_financial_exemption(mocker):
     mocker.patch("core.universe.yf.Ticker", side_effect=mock_ticker_init)
     
     universe_dict = {"HDFCBANK.NS": "Large"}
-    tickers, sector_map, cap_map, df = apply_fundamental_filters(universe_dict, top_percentile=1.0)
+    tickers, sector_map, cap_map, asset_map, underlying_map, df = apply_fundamental_filters(universe_dict, top_percentile=1.0)
     
     # HDFCBANK should be evaluated based on ROA, NIM, NPA in the new adaptive engine
     assert "ROA" in df.columns
@@ -90,7 +90,7 @@ def test_apply_fundamental_filters_min_1_policy(mocker, mock_fundamental_data):
     universe_dict = {f"TICKER_{i}.NS": "Small" for i in range(10)}
     
     # Test with 0.1% percentile (int(10 * 0.001) = 0)
-    tickers, sector_map, cap_map, df = apply_fundamental_filters(universe_dict, top_percentile=0.001)
+    tickers, sector_map, cap_map, asset_map, underlying_map, df = apply_fundamental_filters(universe_dict, top_percentile=0.001)
     
     # Min-1 policy should ensure 1 ticker is returned
     assert len(tickers) == 1

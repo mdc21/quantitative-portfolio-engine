@@ -49,35 +49,168 @@ FALLBACK_SMALL = [
     "LALPATHLAB.NS", "METROPOLIS.NS", "NATCOPHARM.NS", "BIOCON.NS", "AJANTPHARM.NS"
 ]
 
+FALLBACK_ETF = [
+    "NIFTYBEES.NS", "BANKBEES.NS", "CPSEETF.NS", "MON100.NS", 
+    "GOLDBEES.NS", "SILVERBEES.NS", "LIQUIDBEES.NS", "ITBEES.NS"
+]
+
+FALLBACK_MF = [
+    "122589.AMFI", # Parag Parikh Flexi Cap Fund
+    "120828.AMFI", # Quant Active Fund
+    "112248.AMFI", # Nippon India Small Cap
+    "120586.AMFI", # SBI Contra Fund
+    "118989.AMFI"  # HDFC Mid-Cap Opportunities
+]
+
+PASSIVE_METRICS = {
+    # Mapped parameters (Expense Ratio in %, Tracking Error in %, AUM in Crores)
+    "NIFTYBEES.NS":  {"ExpenseRatio": 0.04, "TrackingError": 0.05, "AUM": 15000},
+    "BANKBEES.NS":   {"ExpenseRatio": 0.15, "TrackingError": 0.08, "AUM": 8000},
+    "CPSEETF.NS":    {"ExpenseRatio": 0.01, "TrackingError": 0.04, "AUM": 20000},
+    "MON100.NS":     {"ExpenseRatio": 0.50, "TrackingError": 0.15, "AUM": 3000},
+    "GOLDBEES.NS":   {"ExpenseRatio": 0.79, "TrackingError": 0.30, "AUM": 10000},
+    "SILVERBEES.NS": {"ExpenseRatio": 0.40, "TrackingError": 0.25, "AUM": 2000},
+    "LIQUIDBEES.NS": {"ExpenseRatio": 0.50, "TrackingError": 0.00, "AUM": 25000},
+    "ITBEES.NS":     {"ExpenseRatio": 0.21, "TrackingError": 0.10, "AUM": 4000},
+    "122589.AMFI":   {"ExpenseRatio": 0.65, "TrackingError": 0.20, "AUM": 50000},
+    "120828.AMFI":   {"ExpenseRatio": 0.75, "TrackingError": 0.35, "AUM": 8000},
+    "112248.AMFI":   {"ExpenseRatio": 0.71, "TrackingError": 0.40, "AUM": 40000},
+    "120586.AMFI":   {"ExpenseRatio": 0.69, "TrackingError": 0.25, "AUM": 30000},
+    "118989.AMFI":   {"ExpenseRatio": 0.85, "TrackingError": 0.30, "AUM": 60000}
+}
+
+MF_YAHOO_MAP = {
+    # If MFAPI.in fails over DNS/Firewalls, gracefully pivot to query these liquid .NS ETFs from Yahoo Finance.
+    "122589.AMFI": "HDFCNIFTY.NS",    # Parag Parikh fallback -> HDFC Nifty (YF Ticker changed)
+    "120828.AMFI": "ICICINIFTY.NS",   # Quant Active fallback -> ICICI Nifty
+    "112248.AMFI": "MID150BEES.NS",   # Nippon SC fallback -> Nippon Mid150
+    "120586.AMFI": "SETFNIF50.NS",    # SBI Contra fallback -> SBI Nifty
+    "118989.AMFI": "KOTAKNIFTY.NS"    # HDFC Mid-cap fallback -> Kotak Nifty
+}
+
 def fetch_broad_universe(source="multi_cap"):
     """
     Fetch the multi-cap dictionary, tagging stocks by their Size bracket.
-    Fallback matrix returns ~130 robust assets across L, M, and S spectrum.
+    Fallback matrix returns a broad set of Equities, ETFs, and MFs.
     """
     universe_dict = {}
     for t in FALLBACK_LARGE:
-        universe_dict[t] = "Large"
+        universe_dict[t] = {"Size": "Large", "AssetClass": "Equity", "Underlying": "Equity"}
     for t in FALLBACK_MID:
-        universe_dict[t] = "Mid"
+        universe_dict[t] = {"Size": "Mid", "AssetClass": "Equity", "Underlying": "Equity"}
     for t in FALLBACK_SMALL:
-        universe_dict[t] = "Small"
+        universe_dict[t] = {"Size": "Small", "AssetClass": "Equity", "Underlying": "Equity"}
+        
+    for t in FALLBACK_ETF:
+        underlying = "Equity"
+        region = "Domestic"
+        if "GOLD" in t or "SILVER" in t:
+            underlying = "Metal"
+        elif "LIQUID" in t:
+            underlying = "Debt"
+            
+        if "MON100" in t:
+            region = "International"
+            
+        # Map ETFs to specific sectors
+        if "ITBEES" in t:
+            sector = "Technology"
+        elif "BANKBEES" in t:
+            sector = "Financial Services"
+        elif "CPSE" in t:
+            sector = "PSU_Utilities"
+        elif "MON100" in t:
+            sector = "Technology"
+        elif underlying == "Metal":
+            sector = "Commodities"
+        elif underlying == "Debt":
+            sector = "Cash/Debt"
+        else:
+            sector = "Index"
+            
+        universe_dict[t] = {
+            "Size": "Large", 
+            "AssetClass": "ETF", 
+            "Underlying": underlying, 
+            "Region": region,
+            "TickerSector": sector
+        }
+        
+    for t in FALLBACK_MF:
+        region = "Domestic"
+        # Parag Parikh (122589) has international exposure, but for simplicity we tag as Domestic for now unless specified
+        if t == "122589.AMFI":
+             region = "Domestic" # 80:20 internal so we count as Domestic
+             
+        # Map MFs to specific sectors and caps
+        if "Small Cap" in t or "112248" in t:
+            sector, size = "Index", "Small"
+        elif "Mid-Cap" in t or "118989" in t:
+            sector, size = "Index", "Mid"
+        else:
+            sector, size = "Index", "Large"
+            
+        universe_dict[t] = {
+            "Size": size, 
+            "AssetClass": "MutualFund", 
+            "Underlying": "Equity", 
+            "Region": region,
+            "TickerSector": sector
+        }
         
     return universe_dict
 
 def _evaluate_fundamentals(item):
     """
     Worker function to softly gather all available metrics.
-    item is a tuple of (ticker, size)
+    item is a tuple of (ticker, meta_dict)
     """
-    ticker, size = item
+    ticker, meta = item
+    size = meta["Size"]
+    asset_class = meta["AssetClass"]
+    underlying = meta["Underlying"]
+    preset_sector = meta.get("TickerSector")
+    
     data_source = "Live"  # Track where this stock's data came from
     
-    # Add randomized jitter to avoid 'Burst' detection by Yahoo's anti-bot system
-    import time
-    import random
-    time.sleep(random.uniform(1.0, 3.0))
+    # 🛡️ Structural Pass: By definition, ETFs and MFs don't have business fundamentals 
+    # like ROCE or Debt-to-Equity. We automatically grant them passage.
+    if asset_class in ["ETF", "MutualFund"]:
+        p_metrics = PASSIVE_METRICS.get(ticker, {"ExpenseRatio": 0.50, "TrackingError": 0.20, "AUM": 500})
+        
+        # 🛡️ Hard Liquidity Filter: Reject Passive Assets with AUM < 200 Crores
+        if p_metrics["AUM"] < 200:
+            logger.warning(f"🚫 [Liquidity] {ticker} rejected due to low AUM ({p_metrics['AUM']} Cr)")
+            return None
+
+        return {
+            "Stock": ticker, 
+            "Sector": meta.get("TickerSector", "Passive"), 
+            "Size": size,
+            "AssetClass": asset_class, 
+            "Underlying": underlying,
+            "Region": meta.get("Region", "Domestic"),
+            "DataSource": "Structural Bypass",
+            "ROCE": 0.15, "ProfitGrowth": 0.10, "SalesGrowth": 0.10,
+            "DebtEquity": 0, "MarketCap": 1e12, "PE": 15, "ForwardPE": 15, 
+            "PB": 2, "MedianPE": 15, "MedianPB": 2, "OPM": 0.1, "PEG": 1.0, 
+            "PromoterHold": 1.0, "OCF_NI_Ratio": 1.0, "ROA": 0.05, "NIM": 0.0, "NPA": 0.0,
+            "ExpenseRatio": p_metrics["ExpenseRatio"],
+            "TrackingError": p_metrics["TrackingError"],
+            "AUM": p_metrics["AUM"]
+        }
+
+    # Add randomized jitter to avoid 'Burst' detection if network is working
+    if not connectivity_failed:
+        import time
+        import random
+        time.sleep(random.uniform(0.5, 1.5)) # Reduced delay
     
     try:
+        # ⚡ Fast-Pass: skip straight to fallback if we know network is blocked
+        if connectivity_failed:
+             raise ConnectionError("Global connectivity failure detected. Skipping to fallback.")
+             
         ticker_obj = yf.Ticker(ticker, session=session)
         info = ticker_obj.info
         
@@ -136,7 +269,14 @@ def _evaluate_fundamentals(item):
     except Exception as yf_error:
         # Secondary Fallback: Screener.in
         logger.warning(f"[Fallback] {ticker}: Yahoo failed ({yf_error}). Attempting Screener.in...")
-        screener_data = screener_client.fetch_fundamentals(ticker)
+        screener_data = None
+        try:
+            # Only try Screener if we haven't already confirmed global failure
+            if not connectivity_failed:
+                screener_data = screener_client.fetch_fundamentals(ticker)
+        except Exception as sc_err:
+            logger.warning(f"[Screener] Connection to Screener.in failed: {sc_err}")
+            
         if screener_data:
             logger.info(f"[Screener] ✅ {ticker}: Successfully extracted fundamentals from Screener.in")
             data_source = screener_data.get("data_source", "Screener.in (Fallback)")
@@ -183,6 +323,12 @@ def _evaluate_fundamentals(item):
                 "HCLTECH.NS":    {"roe": 0.24, "pg": 0.12, "sg": 0.13, "de": 10,  "opm": 0.20, "peg": 2.0, "pe": 25, "fpe": 22, "pb": 6.0, "ph": 0.60, "ocf": 1.2, "sector": "Technology", "median_pe": 20, "median_pb": 4.8},
                 "AXISBANK.NS":   {"roe": 0.17, "pg": 0.22, "sg": 0.18, "de": 85,  "opm": 0.30, "peg": 1.2, "pe": 14, "fpe": 12, "pb": 2.3, "ph": 0.08, "ocf": 0.7, "sector": "Financial Services", "roa": 0.018, "nim": 0.040, "npa": 0.018, "median_pe": 18, "median_pb": 2.2},
                 "ASIANPAINT.NS": {"roe": 0.28, "pg": 0.10, "sg": 0.08, "de": 30,  "opm": 0.18, "peg": 3.0, "pe": 55, "fpe": 50, "pb": 14,  "ph": 0.53, "ocf": 1.0, "sector": "Consumer", "median_pe": 65, "median_pb": 16},
+                "HAL.NS":        {"roe": 0.25, "pg": 0.20, "sg": 0.15, "de": 0,   "opm": 0.24, "peg": 1.8, "pe": 35, "fpe": 32, "pb": 7.5,  "ph": 0.75, "ocf": 1.1, "sector": "Industrials", "median_pe": 20, "median_pb": 4.5},
+                "TRENT.NS":      {"roe": 0.35, "pg": 0.40, "sg": 0.35, "de": 40,  "opm": 0.15, "peg": 4.5, "pe": 180, "fpe": 150, "pb": 45, "ph": 0.37, "ocf": 1.2, "sector": "Consumer", "median_pe": 80, "median_pb": 20},
+                "ZOMATO.NS":     {"roe": 0.05, "pg": 2.50, "sg": 0.60, "de": 0,   "opm": 0.02, "peg": 1.1, "pe": 120, "fpe": 80,  "pb": 12,  "ph": 0.00, "ocf": 1.5, "sector": "Technology", "median_pe": 100, "median_pb": 8.0},
+                "SUZLON.NS":     {"roe": 0.22, "pg": 1.80, "sg": 0.30, "de": 15,  "opm": 0.14, "peg": 0.8, "pe": 60, "fpe": 40,  "pb": 18,  "ph": 0.13, "ocf": 1.1, "sector": "Energy", "median_pe": 40, "median_pb": 10},
+                "CDSL.NS":       {"roe": 0.30, "pg": 0.35, "sg": 0.30, "de": 0,   "opm": 0.55, "peg": 1.8, "pe": 60, "fpe": 50,  "pb": 18,  "ph": 0.15, "ocf": 1.2, "sector": "Financial Services", "median_pe": 45, "median_pb": 14},
+                "BSE.NS":        {"roe": 0.20, "pg": 0.50, "sg": 0.45, "de": 0,   "opm": 0.40, "peg": 1.2, "pe": 45, "fpe": 35,  "pb": 10,  "ph": 0.00, "ocf": 1.1, "sector": "Financial Services", "median_pe": 30, "median_pb": 6.5},
             }
             
             profile = CURATED_PROFILES.get(ticker)
@@ -225,7 +371,8 @@ def _evaluate_fundamentals(item):
                 pb_ratio = random.uniform(2, 10)
                 promoter_hold = random.uniform(0.25, 0.60) if size == "Large" else random.uniform(0.10, 0.55)
                 ocf_ni_ratio = random.uniform(0.4, 1.1) if size == "Large" else random.uniform(0.2, 1.0)
-                sector = random.choice(["Technology", "Financial Services", "Energy", "Healthcare", "Consumer", "Industrials"])
+                sector = preset_sector if preset_sector else random.choice(["Technology", "Financial Services", "Energy", "Healthcare", "Consumer", "Industrials"])
+
                 
                 # Synthetic specialized metrics
                 roa = random.uniform(0.005, 0.025) if sector == "Financial Services" else 0.0
@@ -246,6 +393,9 @@ def _evaluate_fundamentals(item):
         "Stock": ticker, 
         "Sector": sector,
         "Size": size,
+        "AssetClass": asset_class,
+        "Underlying": underlying,
+        "Region": meta.get("Region", "Domestic"),
         "DataSource": data_source,
         "ROCE": roe, 
         "ProfitGrowth": profit_growth,
@@ -263,17 +413,37 @@ def _evaluate_fundamentals(item):
         "OCF_NI_Ratio": ocf_ni_ratio,
         "ROA": roa,
         "NIM": nim,
-        "NPA": npa
+        "NPA": npa,
+        "ExpenseRatio": 0.0,
+        "TrackingError": 0.0,
+        "AUM": 0.0
     }
 
+# Global Connectivity Guard to avoid hundreds of timeouts if network is blocked
+connectivity_failed = False
+
 def apply_fundamental_filters(universe_dict, top_percentile=0.3):
+    import warnings
+    warnings.filterwarnings('ignore', category=RuntimeWarning)
+    
+    # Fast-fail network probe
+    global connectivity_failed
+    try:
+        from core.data_loader import session
+        response = session.get("https://query1.finance.yahoo.com", timeout=2)
+        connectivity_failed = False
+    except Exception:
+        if not connectivity_failed:
+             logger.warning("📉 No connection to Yahoo Finance detected. Activating Offline Fast-Pass Fallback.")
+        connectivity_failed = True
+        
     print(f"🔍 Compiling fundamental matrix for {len(universe_dict)} Multi-Cap stocks...")
     
     raw_data = []
     items = list(universe_dict.items())
     
-    with ThreadPoolExecutor(max_workers=5) as executor:
-        # Safely exhaust the iterator to prevent NameErrors in workers or incomplete data
+    # ⚡ Parallel Compilation: Increased to 20 workers for institutional speed
+    with ThreadPoolExecutor(max_workers=20) as executor:
         results = list(executor.map(_evaluate_fundamentals, items))
         
     raw_data = [res for res in results if res is not None]
@@ -330,7 +500,19 @@ def apply_fundamental_filters(universe_dict, top_percentile=0.3):
         sector = row["Sector"]
         
         # Base Quality Score
-        if sector == "Financial Services":
+        if sector == "Passive":
+            # Morningstar Implementation: 
+            # 1. Price Pillar (Expense Ratio inversely scored, capped at 1.5%)
+            q_er = max(0, 1 - (row["ExpenseRatio"] / 1.5))
+            # 2. Process Pillar (Tracking error inversely scored, capped at 0.5%)
+            q_te = max(0, 1 - (row["TrackingError"] / 0.5))
+            # 3. People Pillar (Liquidity / AUM directly scored, capped at 25000Cr)
+            q_aum = min(max(row["AUM"], 0) / 25000, 1.0)
+            
+            # Combine Passive Quality
+            q_quality = (0.50 * q_er) + (0.30 * q_te) + (0.20 * q_aum)
+            
+        elif sector == "Financial Services":
             q_roa = min(max(row["ROA"], 0) / 0.018, 1.2)
             q_nim = min(max(row["NIM"], 0) / 0.04, 1.2)
             q_npa = max(0, 1 - (row["NPA"] / 0.05))
@@ -359,16 +541,29 @@ def apply_fundamental_filters(universe_dict, top_percentile=0.3):
 
     df["Fundamental_Score"] = df.apply(calculate_adaptive_score, axis=1)
 
-    # Still sort by score to find the elite few
+    # Still sort by score to find the elite few equities
     df = df.sort_values("Fundamental_Score", ascending=False)
     
     cutoff = max(1, int(len(df) * top_percentile))
     df_selected = df.head(cutoff)
     
+    # 🛡️ Standalone Passive Vehicle Preservation
+    # Ensure all ETFs and Mutual Funds that survived the Morningstar criteria
+    # (>0.50 score) are included regardless of the strict equity cutoff pool.
+    passive_survivors = df[(df["AssetClass"].isin(["ETF", "MutualFund"])) & (df["Fundamental_Score"] > 0.50)]
+    for _, row in passive_survivors.iterrows():
+        if row["Stock"] not in df_selected["Stock"].values:
+            # We append them to the selected pool
+            df_selected = pd.concat([df_selected, row.to_frame().T], ignore_index=True)
+            
     investable_tickers = df_selected["Stock"].tolist()
     sector_map = dict(zip(df_selected["Stock"], df_selected["Sector"]))
     cap_map = dict(zip(df_selected["Stock"], df_selected["Size"]))
     
-    logger.info(f"✅ Adaptive Quality Scoring Complete. Promoted top {cutoff} high-fidelity stocks.")
+    # Safely extract AssetClass and Underlying for backwards compatibility
+    asset_class_map = {row["Stock"]: row.get("AssetClass", "Equity") for _, row in df_selected.iterrows()}
+    underlying_map = {row["Stock"]: row.get("Underlying", "Equity") for _, row in df_selected.iterrows()}
+    region_map = {row["Stock"]: row.get("Region", "Domestic") for _, row in df_selected.iterrows()}
     
-    return investable_tickers, sector_map, cap_map, df
+    logger.info(f"✅ Adaptive Quality Scoring Complete. Promoted top {cutoff} high-fidelity stocks.")
+    return investable_tickers, sector_map, cap_map, asset_class_map, underlying_map, region_map, df_selected
